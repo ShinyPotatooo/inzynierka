@@ -6,6 +6,7 @@ import DashboardPage from './pages/DashboardPage';
 import Navbar from './components/Navbar';
 import { ToastContainer } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
+import { AuthProvider } from './context/AuthContext';
 
 function LayoutWrapper() {
   const location = useLocation();
@@ -25,12 +26,16 @@ function LayoutWrapper() {
 
 function App() {
   return (
-    <>
+    <AuthProvider>
       <ToastContainer />
       <LayoutWrapper />
-    </>
+    </AuthProvider>
   );
 }
+
+<Route path="*" element={<div>404 - Page not found</div>} />
+
+
 
 export default App;
 
