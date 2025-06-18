@@ -9,7 +9,6 @@ const DashboardPage = () => {
     { name: 'Produkt C', quantity: 5, status: 'zarezerwowany' },
   ];
 
-  const total = items.length;
   const available = items.filter(i => i.status === 'dostępny').length;
   const deleted = items.filter(i => i.status === 'usunięty').length;
   const reserved = items.filter(i => i.status === 'zarezerwowany').length;
