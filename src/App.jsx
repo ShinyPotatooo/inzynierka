@@ -3,6 +3,7 @@ import { Routes, Route, useLocation } from 'react-router-dom';
 import LoginPage from './pages/LoginPage';
 import InventoryPage from './pages/InventoryPage';
 import DashboardPage from './pages/DashboardPage';
+import AdminPanelPage from './AdminPanelPage';
 import Navbar from './components/Navbar';
 import { ToastContainer } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
@@ -19,6 +20,7 @@ function LayoutWrapper() {
         <Route path="/" element={<LoginPage />} />
         <Route path="/inventory" element={<InventoryPage />} />
         <Route path="/dashboard" element={<DashboardPage />} />
+        <Route path="/admin" element={<AdminPanelPage />} />
       </Routes>
     </>
   );
