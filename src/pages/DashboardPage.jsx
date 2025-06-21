@@ -2,16 +2,12 @@ import React from 'react';
 import StatCard from '../components/Dashboard/StatCard';
 
 const DashboardPage = () => {
-  // Przykładowe dane lokalne (na razie bez backendu)
-  const items = [
-    { name: 'Produkt A', quantity: 10, status: 'dostępny' },
-    { name: 'Produkt B', quantity: 0, status: 'usunięty' },
-    { name: 'Produkt C', quantity: 5, status: 'zarezerwowany' },
-  ];
+  // Wczytaj dane z localStorage
+  const storedItems = JSON.parse(localStorage.getItem('inventory_items')) || [];
 
-  const available = items.filter(i => i.status === 'dostępny').length;
-  const deleted = items.filter(i => i.status === 'usunięty').length;
-  const reserved = items.filter(i => i.status === 'zarezerwowany').length;
+  const available = storedItems.filter(i => i.status === 'dostępny').length;
+  const deleted = storedItems.filter(i => i.status === 'usunięty').length;
+  const reserved = storedItems.filter(i => i.status === 'zarezerwowany').length;
 
   return (
     <div style={{ padding: '2rem' }}>
@@ -37,4 +33,5 @@ const DashboardPage = () => {
 };
 
 export default DashboardPage;
+
 

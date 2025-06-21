@@ -12,6 +12,12 @@ export default function LoginPage() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+
+    if (!email || !password) {
+      toast.warning('Uzupełnij oba pola');
+      return;
+    }
+
     try {
       const token = await loginUser({ email, password });
       login(token);
@@ -31,4 +37,5 @@ export default function LoginPage() {
     </form>
   );
 }
+
 

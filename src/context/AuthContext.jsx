@@ -3,26 +3,27 @@ import { createContext, useState, useEffect } from 'react';
 export const AuthContext = createContext();
 
 export const AuthProvider = ({ children }) => {
-  const [user, setUser] = useState(null); // możesz rozszerzyć o role
-  const [token, setToken] = useState(localStorage.getItem('token') || '');
+  const [user, setUser] = useState(null);
+  const [token, setToken] = useState(() => {
+    const saved = localStorage.getItem('token');
+    return saved ? JSON.parse(saved) : null;
+  });
 
   useEffect(() => {
     if (token) {
-      // przykład dekodowania tokena JWT
-      const payload = JSON.parse(atob(token.split('.')[1]));
-      setUser({ ...payload });
+      setUser({ email: token.email, role: token.role });
     }
   }, [token]);
 
-  const login = (jwt) => {
-    localStorage.setItem('token', jwt);
-    setToken(jwt);
+  const login = (data) => {
+    localStorage.setItem('token', JSON.stringify(data));
+    setToken(data);
   };
 
   const logout = () => {
     localStorage.removeItem('token');
     setUser(null);
-    setToken('');
+    setToken(null);
   };
 
   return (
@@ -31,3 +32,4 @@ export const AuthProvider = ({ children }) => {
     </AuthContext.Provider>
   );
 };
+

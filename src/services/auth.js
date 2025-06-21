@@ -1,6 +1,12 @@
-import API from './api'; // zakładamy że axios z baseURL już masz
+export const loginUser = async ({ email, password }) => {
+  // Fake "backend" login
+  if (email === 'admin@example.com' && password === 'admin') {
+    return { email, role: 'admin' };
+  }
+  if (email === 'user@example.com' && password === 'user') {
+    return { email, role: 'user' };
+  }
 
-export const loginUser = async (credentials) => {
-  const response = await API.post('/auth/login', credentials);
-  return response.data.token; // oczekujemy że backend zwraca token
+  throw new Error('Invalid credentials');
 };
+
