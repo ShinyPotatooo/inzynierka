@@ -8,6 +8,7 @@ import Navbar from './components/Navbar';
 import { ToastContainer } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
 import { AuthProvider, AuthContext } from './context/AuthContext';
+import PrivateRoute from './components/PrivateRoute';
 
 function LayoutWrapper() {
   const location = useLocation();
@@ -19,8 +20,22 @@ function LayoutWrapper() {
       {!hideNavbar && <Navbar />}
       <Routes>
         <Route path="/" element={<LoginPage />} />
-        <Route path="/inventory" element={<InventoryPage />} />
-        <Route path="/dashboard" element={<DashboardPage />} />
+        <Route
+          path="/inventory"
+          element={
+            <PrivateRoute>
+              <InventoryPage />
+            </PrivateRoute>
+          }
+        />
+        <Route
+          path="/dashboard"
+          element={
+            <PrivateRoute>
+              <DashboardPage />
+            </PrivateRoute>
+          }
+        />
         <Route
           path="/admin"
           element={
@@ -46,6 +61,7 @@ function App() {
 }
 
 export default App;
+
 
 
 

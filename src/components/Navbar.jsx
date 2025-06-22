@@ -1,18 +1,27 @@
 import React, { useContext } from 'react';
-import { Link, NavLink } from 'react-router-dom';
-import './Navbar.css';
+import { NavLink, useNavigate } from 'react-router-dom';
 import { AuthContext } from '../context/AuthContext';
+import './Navbar.css';
 
 export default function Navbar() {
-  const { user } = useContext(AuthContext);
+  const { logout } = useContext(AuthContext);
+  const navigate = useNavigate();
+
+  const handleLogout = () => {
+    logout();
+    navigate('/');
+  };
 
   return (
     <nav className="navbar">
-      <Link to="/dashboard">Dashboard</Link>
-      <Link to="/inventory">Magazyn</Link>
-      {user?.role === 'admin' && <NavLink to="/admin">Admin</NavLink>}
-      <Link to="/">Wyloguj</Link>
+      <NavLink to="/dashboard">Dashboard</NavLink>
+      <NavLink to="/inventory">Magazyn</NavLink>
+      <NavLink to="/admin">Admin</NavLink>
+      <button onClick={handleLogout} style={{ marginLeft: '1rem' }}>
+        Wyloguj
+      </button>
     </nav>
   );
 }
+
 
