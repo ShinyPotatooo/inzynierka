@@ -21,7 +21,16 @@ function LayoutWrapper() {
         <Route path="/" element={<LoginPage />} />
         <Route path="/inventory" element={<InventoryPage />} />
         <Route path="/dashboard" element={<DashboardPage />} />
-        <Route path="/admin" element={user?.role === 'admin' ? <AdminPanelPage /> : <Navigate to="/" />} />
+        <Route
+          path="/admin"
+          element={
+            user?.role === 'admin' ? (
+              <AdminPanelPage />
+            ) : (
+              <Navigate to="/" replace />
+            )
+          }
+        />
       </Routes>
     </>
   );
@@ -37,6 +46,7 @@ function App() {
 }
 
 export default App;
+
 
 
 

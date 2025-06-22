@@ -31,11 +31,21 @@ export default function LoginPage() {
   return (
     <form onSubmit={handleSubmit}>
       <h2>Logowanie</h2>
-      <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Email" />
-      <input value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Hasło" type="password" />
+      <input
+        value={email}
+        onChange={(e) => setEmail(e.target.value)}
+        placeholder="Email"
+      />
+      <input
+        value={password}
+        onChange={(e) => setPassword(e.target.value)}
+        placeholder="Hasło"
+        type="password"
+      />
       <button type="submit">Zaloguj</button>
     </form>
   );
 }
+
 
 

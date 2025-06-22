@@ -1,53 +1,65 @@
 import React from 'react';
+import PropTypes from 'prop-types';
 
 const ItemTable = ({ items, onDelete, onUpdate }) => {
+  const handleStatusChange = (id, newStatus) => {
+    onUpdate(id, { status: newStatus });
+  };
+
   return (
-    <table style={{ width: '100%', marginTop: '2rem', borderCollapse: 'collapse' }}>
+    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
       <thead>
         <tr>
-          <th style={thStyle}>Nazwa</th>
-          <th style={thStyle}>Ilość</th>
-          <th style={thStyle}>Status</th>
-          <th style={thStyle}>Akcje</th>
+          <th>Nazwa</th>
+          <th>Ilość</th>
+          <th>Status</th>
+          <th>Akcje</th>
         </tr>
       </thead>
       <tbody>
-        {items.map(item => (
-          <tr key={item.id}>
-            <td style={tdStyle}>{item.name}</td>
-            <td style={tdStyle}>{item.quantity}</td>
-            <td style={tdStyle}>
-              <select
-                value={item.status}
-                onChange={(e) => onUpdate(item.id, { status: e.target.value })}
-              >
-                <option value="dostępny">Dostępny</option>
-                <option value="usunięty">Usunięty</option>
-                <option value="zarezerwowany">Zarezerwowany</option>
-              </select>
-            </td>
-            <td style={tdStyle}>
-              <button onClick={() => onDelete(item.id)} style={{ marginLeft: '8px' }}>
-                Usuń
-              </button>
+        {items.length === 0 ? (
+          <tr>
+            <td colSpan="4" style={{ textAlign: 'center' }}>
+              Brak produktów
             </td>
           </tr>
-        ))}
+        ) : (
+          items.map((item) => (
+            <tr key={item.id}>
+              <td>{item.name}</td>
+              <td>{item.quantity}</td>
+              <td>
+                <select
+                  value={item.status}
+                  onChange={(e) => handleStatusChange(item.id, e.target.value)}
+                >
+                  <option value="dostępny">Dostępny</option>
+                  <option value="usunięty">Usunięty</option>
+                  <option value="zarezerwowany">Zarezerwowany</option>
+                </select>
+              </td>
+              <td>
+                <button onClick={() => onDelete(item.id)}>Usuń</button>
+              </td>
+            </tr>
+          ))
+        )}
       </tbody>
     </table>
   );
 };
 
-const thStyle = {
-  borderBottom: '1px solid #ccc',
-  textAlign: 'left',
-  padding: '0.5rem'
-};
-
-const tdStyle = {
-  borderBottom: '1px solid #eee',
-  padding: '0.5rem'
+ItemTable.propTypes = {
+  items: PropTypes.arrayOf(
+    PropTypes.shape({
+      id: PropTypes.number,
+      name: PropTypes.string,
+      quantity: PropTypes.number,
+      status: PropTypes.string,
+    })
+  ).isRequired,
+  onDelete: PropTypes.func.isRequired,
+  onUpdate: PropTypes.func.isRequired,
 };
 
 export default ItemTable;
-

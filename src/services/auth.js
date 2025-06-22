@@ -1,5 +1,4 @@
 export const loginUser = async ({ email, password }) => {
-  // Fake "backend" login
   if (email === 'admin@example.com' && password === 'admin') {
     return { email, role: 'admin' };
   }
