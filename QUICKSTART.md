@@ -57,6 +57,18 @@ curl http://localhost:3001/health
 curl http://localhost:3001/api
 ```
 
+### Test API Endpoints
+```bash
+# Lista produktów
+curl http://localhost:3001/api/products
+
+# Lista użytkowników
+curl http://localhost:3001/api/users
+
+# Podsumowanie magazynu
+curl http://localhost:3001/api/inventory/summary
+```
+
 ## 📊 Dane Testowe
 
 Po uruchomieniu seederów masz dostęp do:
@@ -73,6 +85,39 @@ Po uruchomieniu seederów masz dostęp do:
 - Klawiatura mechaniczna RGB
 - Monitor 24" Full HD
 - Kabel HDMI 2m
+
+## 🌐 Dostępne API Endpoints
+
+### Authentication
+- `POST /api/auth/login` - Logowanie
+- `POST /api/auth/register` - Rejestracja
+
+### Users
+- `GET /api/users` - Lista użytkowników
+- `GET /api/users/:id` - Szczegóły użytkownika
+- `PUT /api/users/:id` - Aktualizacja użytkownika
+- `DELETE /api/users/:id` - Usunięcie użytkownika
+
+### Products
+- `GET /api/products` - Lista produktów
+- `POST /api/products` - Dodanie produktu
+- `GET /api/products/:id` - Szczegóły produktu
+- `PUT /api/products/:id` - Aktualizacja produktu
+- `DELETE /api/products/:id` - Usunięcie produktu
+
+### Inventory
+- `GET /api/inventory` - Lista pozycji magazynowych
+- `POST /api/inventory` - Dodanie pozycji magazynowej
+- `GET /api/inventory/:id` - Szczegóły pozycji magazynowej
+- `PUT /api/inventory/:id` - Aktualizacja pozycji magazynowej
+- `DELETE /api/inventory/:id` - Usunięcie pozycji magazynowej
+- `GET /api/inventory/summary` - Podsumowanie stanu magazynowego
+- `POST /api/inventory/operations` - Wykonanie operacji magazynowej
+
+### Notifications
+- `GET /api/notifications` - Lista powiadomień
+- `PUT /api/notifications/:id/read` - Oznaczenie jako przeczytane
+- `DELETE /api/notifications/:id` - Usunięcie powiadomienia
 
 ## 🔧 Przydatne Komendy
 
@@ -131,6 +176,18 @@ lsof -i :3001
 echo "PORT=3002" >> config.env
 ```
 
+### Problem: "nodemon app crashed"
+```bash
+# Zabij wszystkie procesy Node.js
+pkill -f node
+
+# Sprawdź czy port jest wolny
+lsof -i :3001
+
+# Uruchom ponownie
+npm run dev
+```
+
 ## 📁 Struktura Projektu
 
 ```
@@ -145,29 +202,58 @@ wms-backend/
 │   ├── ActivityLog.js
 │   ├── Notification.js
 │   └── index.js
+├── routes/                  # API Routes
+│   ├── auth.js
+│   ├── users.js
+│   ├── products.js
+│   ├── inventory.js
+│   └── notifications.js
 ├── migrations/              # Migracje bazy danych
 ├── seeders/                 # Dane testowe
 ├── scripts/                 # Skrypty pomocnicze
 ├── docs/                    # Dokumentacja
+│   └── api-documentation.md
 ├── server.js               # Główny plik serwera
 ├── package.json
 ├── config.env              # Zmienne środowiskowe
 └── README.md
 ```
 
+## 🔗 Integracja z Frontendem
+
+### CORS Configuration
+Backend akceptuje żądania z:
+- `http://localhost:3000` (React dev server)
+- `http://localhost:8080` (Vue CLI)
+- `http://localhost:4200` (Angular CLI)
+
+### Response Format
+```json
+{
+  "success": true,
+  "data": { ... },
+  "message": "Operation successful"
+}
+```
+
+### Error Format
+```json
+{
+  "success": false,
+  "error": "Error message",
+  "status": 400
+}
+```
+
 ## 🔐 Następne Kroki
 
 1. **Autoryzacja JWT** - Dodanie middleware autoryzacji
-2. **API Routes** - Implementacja endpointów REST
-3. **Walidation** - Walidacja danych wejściowych
-4. **Testing** - Testy jednostkowe i integracyjne
+2. **Validation** - Walidacja danych wejściowych
+3. **Testing** - Testy jednostkowe i integracyjne
+4. **Documentation** - Swagger/OpenAPI documentation
 
 ## 📞 Wsparcie
 
 - 📖 Pełna dokumentacja: `README.md`
 - 📚 API Documentation: `docs/api-documentation.md`
-- 🐛 Issues: Utwórz issue w repozytorium
-
----
-
-**Gotowe! 🎉** Twój WMS Backend jest uruchomiony i gotowy do dalszego rozwoju. 
+- 🚀 Quick Start: `QUICKSTART.md`

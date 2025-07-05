@@ -10,6 +10,8 @@ Backend systemu zarządzania magazynem (WMS) zbudowany w Node.js z Express.js i 
 - ✅ Historia operacji (logi zmian)
 - ✅ Automatyczne powiadomienia o niskim stanie
 - ✅ Zarządzanie progami uzupełnień
+- ✅ **API Endpoints** - Pełna implementacja REST API
+- ✅ **CORS Configuration** - Gotowe do integracji z frontendem
 
 ### Fullstack (+)
 - ✅ Eksport danych (CSV, PDF)
@@ -131,7 +133,7 @@ Po uruchomieniu seederów dostępne są następujące konta:
 - **worker1** / password123 (worker1@wms.com)
 - **worker2** / password123 (worker2@wms.com)
 
-### Produkty
+### Produkty (seedery)
 - Laptop Dell Inspiron 15
 - Mysz bezprzewodowa Logitech
 - Klawiatura mechaniczna RGB
@@ -145,6 +147,37 @@ Po uruchomieniu seederów dostępne są następujące konta:
 
 ### API Base
 - `GET /api` - Informacje o API
+
+### Authentication
+- `POST /api/auth/login` - Logowanie użytkownika
+- `POST /api/auth/register` - Rejestracja nowego użytkownika
+
+### Users
+- `GET /api/users` - Lista wszystkich użytkowników
+- `GET /api/users/:id` - Szczegóły użytkownika
+- `PUT /api/users/:id` - Aktualizacja użytkownika
+- `DELETE /api/users/:id` - Usunięcie użytkownika
+
+### Products
+- `GET /api/products` - Lista wszystkich produktów
+- `POST /api/products` - Dodanie nowego produktu
+- `GET /api/products/:id` - Szczegóły produktu
+- `PUT /api/products/:id` - Aktualizacja produktu
+- `DELETE /api/products/:id` - Usunięcie produktu
+
+### Inventory
+- `GET /api/inventory` - Lista wszystkich pozycji magazynowych
+- `POST /api/inventory` - Dodanie nowej pozycji magazynowej
+- `GET /api/inventory/:id` - Szczegóły pozycji magazynowej
+- `PUT /api/inventory/:id` - Aktualizacja pozycji magazynowej
+- `DELETE /api/inventory/:id` - Usunięcie pozycji magazynowej
+- `GET /api/inventory/summary` - Podsumowanie stanu magazynowego
+- `POST /api/inventory/operations` - Wykonanie operacji magazynowej
+
+### Notifications
+- `GET /api/notifications` - Lista powiadomień
+- `PUT /api/notifications/:id/read` - Oznaczenie powiadomienia jako przeczytane
+- `DELETE /api/notifications/:id` - Usunięcie powiadomienia
 
 ## 📚 Skrypty NPM
 
@@ -176,24 +209,43 @@ curl http://localhost:3001/health
 - Walidacja danych wejściowych
 - Szyfrowanie haseł (bcrypt)
 
+## 🔗 Integracja z Frontendem
+
+### CORS Configuration
+Backend jest skonfigurowany do akceptowania żądań z:
+- `http://localhost:3000` (React/Vue/Angular dev server)
+- `http://localhost:8080` (Vue CLI default)
+- `http://localhost:4200` (Angular CLI default)
+
+### Response Format
+Wszystkie odpowiedzi API są w formacie JSON:
+```json
+{
+  "success": true,
+  "data": { ... },
+  "message": "Operation successful"
+}
+```
+
+### Error Handling
+Błędy są zwracane w formacie:
+```json
+{
+  "success": false,
+  "error": "Error message",
+  "status": 400
+}
+```
+
 ## 📈 Następne Kroki
 
 1. **Autoryzacja JWT** - Dodanie middleware autoryzacji
-2. **API Routes** - Implementacja endpointów REST
-3. **Walidation** - Walidacja danych wejściowych
-4. **Testing** - Testy jednostkowe i integracyjne
-5. **Documentation** - Swagger/OpenAPI documentation
-6. **Notifications** - System powiadomień
-7. **Reports** - Generowanie raportów
-8. **Export** - Eksport danych (CSV, PDF)
-
-## 🤝 Kontrybucja
-
-1. Fork the repository
-2. Create feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit changes (`git commit -m 'Add amazing feature'`)
-4. Push to branch (`git push origin feature/amazing-feature`)
-5. Open Pull Request
+2. **Validation** - Walidacja danych wejściowych
+3. **Testing** - Testy jednostkowe i integracyjne
+4. **Documentation** - Swagger/OpenAPI documentation
+5. **Notifications** - System powiadomień
+6. **Reports** - Generowanie raportów
+7. **Export** - Eksport danych (CSV, PDF)
 
 ## 📄 Licencja
 
@@ -202,7 +254,6 @@ MIT License - zobacz plik [LICENSE](LICENSE) dla szczegółów.
 ## 👥 Autorzy
 
 - Mikolaj - Backend Developer
-- [Inni członkowie zespołu]
 
 ## 📞 Wsparcie
 
