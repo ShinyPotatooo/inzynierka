@@ -9,7 +9,7 @@ import { ToastContainer } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
 import { AuthProvider, AuthContext } from './context/AuthContext';
 import PrivateRoute from './components/PrivateRoute';
-
+import './globals.css';  
 function LayoutWrapper() {
   const location = useLocation();
   const hideNavbar = location.pathname === '/';
