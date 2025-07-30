@@ -6,7 +6,7 @@ import { toast } from 'react-toastify';
 const AdminPanelPage = () => {
   const [users, setUsers] = useState([]);
   const [newEmail, setNewEmail] = useState('');
-  const [newRole, setNewRole] = useState('user');
+  const [newRole, setNewRole] = useState('worker');
   const [loading, setLoading] = useState(true);
 
   const { user, logout } = useContext(AuthContext);
@@ -59,7 +59,7 @@ const AdminPanelPage = () => {
         body: JSON.stringify({
           username: email.split('@')[0],
           email,
-          password: 'defaultPassword123', // tymczasowe hasło
+          password: 'defaultPassword123',
           firstName: 'Nowy',
           lastName: 'Użytkownik',
           role: newRole,
@@ -72,7 +72,7 @@ const AdminPanelPage = () => {
         toast.success('Dodano użytkownika!');
         fetchUsers();
         setNewEmail('');
-        setNewRole('user');
+        setNewRole('worker');
       } else {
         toast.error(data.error || 'Błąd dodawania');
       }
@@ -82,25 +82,30 @@ const AdminPanelPage = () => {
     }
   };
 
-  const deleteUser = async (id) => {
-    try {
-      const res = await fetch(`${process.env.REACT_APP_API_URL}/users/${id}`, {
-        method: 'DELETE',
-      });
+ const deleteUser = async (id) => {
+  if (!window.confirm('Czy na pewno chcesz trwale usunąć tego użytkownika?')) {
+    return;
+  }
 
-      const data = await res.json();
+  try {
+    const res = await fetch(`${process.env.REACT_APP_API_URL}/users/${id}`, {
+      method: 'DELETE',
+    });
 
-      if (data.success) {
-        toast.success('Użytkownik zdezaktywowany');
-        fetchUsers();
-      } else {
-        toast.error(data.error || 'Błąd usuwania');
-      }
-    } catch (err) {
-      console.error(err);
-      toast.error('Błąd serwera przy usuwaniu');
+    const data = await res.json();
+
+    if (data.success) {
+      toast.success('Użytkownik usunięty');
+      // Natychmiastowa aktualizacja stanu zamiast ponownego pobierania
+      setUsers(prevUsers => prevUsers.filter(user => user.id !== id));
+    } else {
+      toast.error(data.error || 'Błąd usuwania');
     }
-  };
+  } catch (err) {
+    console.error(err);
+    toast.error('Błąd serwera przy usuwaniu');
+  }
+};
 
   const changeRole = async (id, newRole) => {
     try {
@@ -145,7 +150,8 @@ const AdminPanelPage = () => {
           onChange={(e) => setNewRole(e.target.value)}
           style={{ marginRight: '0.5rem' }}
         >
-          <option value="user">user</option>
+          <option value="worker">worker</option>
+          <option value="manager">manager</option>
           <option value="admin">admin</option>
         </select>
         <button onClick={addUser}>Dodaj użytkownika</button>
@@ -168,13 +174,18 @@ const AdminPanelPage = () => {
                   value={user.role}
                   onChange={(e) => changeRole(user.id, e.target.value)}
                 >
-                  <option value="admin">admin</option>
-                  <option value="user">user</option>
                   <option value="worker">worker</option>
+                  <option value="manager">manager</option>
+                  <option value="admin">admin</option>
                 </select>
               </td>
               <td>
-                <button onClick={() => deleteUser(user.id)}>Usuń</button>
+                <button 
+                  onClick={() => deleteUser(user.id)}
+                  style={{ backgroundColor: '#ffcccc', color: '#ff0000' }}
+                >
+                  Usuń
+                </button>
               </td>
             </tr>
           ))}
@@ -185,14 +196,3 @@ const AdminPanelPage = () => {
 };
 
 export default AdminPanelPage;
-
-
-
-
-
-
-
-
-
-
-

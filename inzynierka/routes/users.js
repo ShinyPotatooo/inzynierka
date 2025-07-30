@@ -6,12 +6,11 @@ const bcrypt = require('bcrypt');
 // GET /api/users - Get all users
 router.get('/', async (req, res) => {
   try {
-    const { page = 1, limit = 10, role, isActive } = req.query;
+    const { page = 1, limit = 10, role } = req.query;
     const offset = (page - 1) * limit;
     
     const whereClause = {};
     if (role) whereClause.role = role;
-    if (isActive !== undefined) whereClause.isActive = isActive === 'true';
 
     const users = await User.findAndCountAll({
       where: whereClause,
@@ -117,8 +116,7 @@ router.post('/', async (req, res) => {
       password: hashedPassword,
       firstName,
       lastName,
-      role,
-      isActive: true
+      role
     });
 
     const { password: _, ...userData } = user.toJSON();
@@ -144,7 +142,7 @@ router.post('/', async (req, res) => {
 router.put('/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const { username, email, firstName, lastName, role, isActive, password } = req.body;
+    const { username, email, firstName, lastName, role, password } = req.body;
 
     const user = await User.findByPk(id);
     if (!user) {
@@ -185,7 +183,6 @@ router.put('/:id', async (req, res) => {
     if (firstName) updateData.firstName = firstName;
     if (lastName) updateData.lastName = lastName;
     if (role) updateData.role = role;
-    if (isActive !== undefined) updateData.isActive = isActive;
 
     // Hash password if provided
     if (password) {
@@ -213,7 +210,7 @@ router.put('/:id', async (req, res) => {
   }
 });
 
-// DELETE /api/users/:id - Delete user
+// DELETE /api/users/:id - Delete user (HARD DELETE)
 router.delete('/:id', async (req, res) => {
   try {
     const { id } = req.params;
@@ -226,13 +223,13 @@ router.delete('/:id', async (req, res) => {
       });
     }
 
-    // Soft delete - just deactivate the user
-    await user.update({ isActive: false });
+    // Hard delete - fizyczne usunięcie użytkownika
+    await user.destroy();
 
     res.json({
       success: true,
       data: {
-        message: 'User deactivated successfully'
+        message: 'User deleted successfully'
       }
     });
 
@@ -245,4 +242,4 @@ router.delete('/:id', async (req, res) => {
   }
 });
 
-module.exports = router; 
+module.exports = router;
