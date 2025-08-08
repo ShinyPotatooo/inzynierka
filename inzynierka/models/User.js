@@ -46,6 +46,11 @@ module.exports = (sequelize) => {
       allowNull: false,
       defaultValue: 'worker'
     },
+    isActive: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: true
+    },
     lastLoginAt: {
       type: DataTypes.DATE
     },
@@ -73,21 +78,16 @@ module.exports = (sequelize) => {
       },
       {
         fields: ['role']
-      },
-      {
-        fields: ['isActive']
       }
     ]
   });
 
   User.associate = (models) => {
-    // User has many ActivityLogs
     User.hasMany(models.ActivityLog, {
       foreignKey: 'userId',
       as: 'activityLogs'
     });
 
-    // User has many InventoryOperations
     User.hasMany(models.InventoryOperation, {
       foreignKey: 'userId',
       as: 'inventoryOperations'
@@ -95,4 +95,4 @@ module.exports = (sequelize) => {
   };
 
   return User;
-}; 
+};
