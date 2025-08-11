@@ -1,23 +1,26 @@
 // src/services/products.js
 import API from './api';
 
-export const createProduct = async (product) => {
-  const response = await API.post('/products', product);
-  return response.data.data.product;
-};
+export async function listProducts({ page = 1, limit = 10, search = '' } = {}) {
+  const res = await API.get('/products', { params: { page, limit, search } });
+  if (!res.data?.success) throw new Error(res.data?.error || 'Błąd pobierania produktów');
+  return res.data.data; // { products, pagination }
+}
 
-// Dodaj pozostałe metody CRUD jeśli potrzebne
-export const fetchProducts = async () => {
-  const response = await API.get('/products');
-  return response.data.data.products;
-};
+export async function createProduct(payload) {
+  const res = await API.post('/products', payload);
+  if (!res.data?.success) throw new Error(res.data?.error || 'Błąd tworzenia produktu');
+  return res.data.data.product;
+}
 
-export const updateProduct = async (id, product) => {
-  const response = await API.put(`/products/${id}`, product);
-  return response.data.data.product;
-};
+export async function getProductOptions(query = '', limit = 20) {
+  const res = await API.get('/products/options', { params: { query, limit } });
+  if (!res.data?.success) throw new Error(res.data?.error || 'Błąd pobierania opcji produktów');
+  return res.data.data.options; // [{id,label}]
+}
 
-export const deleteProduct = async (id) => {
-  const response = await API.delete(`/products/${id}`);
-  return response.data.data.message;
-};
+export async function getProductById(id) {
+  const res = await API.get(`/products/${id}`);
+  if (!res.data?.success) throw new Error(res.data?.error || 'Błąd pobierania produktu');
+  return res.data.data.product;
+}

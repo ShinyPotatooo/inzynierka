@@ -4,7 +4,8 @@ import LoginPage from './pages/LoginPage';
 import InventoryPage from './pages/InventoryPage';
 import DashboardPage from './pages/DashboardPage';
 import AdminPanelPage from './pages/AdminPanelPage';
-import ProductPage from './pages/ProductPage'; // ✅ NOWE
+import ProductPage from './pages/ProductPage'; // Dodawanie
+import ProductsListPage from './pages/ProductsListPage.jsx'; // Spis produktów
 import Navbar from './components/Navbar';
 import { ToastContainer } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
@@ -14,7 +15,6 @@ import PrivateRoute from './components/PrivateRoute';
 function LayoutWrapper({ children }) {
   const location = useLocation();
   const hideNavbar = location.pathname === '/';
-
   return (
     <>
       {!hideNavbar && <Navbar />}
@@ -63,8 +63,21 @@ function App() {
           }
         />
 
+        {/* Spis produktów */}
         <Route
           path="/products"
+          element={
+            <PrivateRoute>
+              <LayoutWrapper>
+                <ProductsListPage />
+              </LayoutWrapper>
+            </PrivateRoute>
+          }
+        />
+
+        {/* Dodawanie nowego produktu */}
+        <Route
+          path="/products/new"
           element={
             <PrivateRoute requiredRole="admin">
               <LayoutWrapper>
@@ -79,7 +92,6 @@ function App() {
 }
 
 export default App;
-
 
 
 
