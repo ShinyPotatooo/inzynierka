@@ -1,28 +1,27 @@
 import React, { useState, useContext } from 'react';
 import { AuthContext } from '../context/AuthContext';
-import { login as loginFromAPI } from '../services/auth'; // zmieniona nazwa, by nie kolidowało z contextowym loginem
+import { login as loginFromAPI } from '../services/auth';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'react-toastify';
 
+// czyścimy ewentualny stary stan
 localStorage.removeItem('user');
 
 export default function LoginPage() {
-  const [username, setUsername] = useState('');
+  const [identifier, setIdentifier] = useState(''); // email LUB nazwa
   const [password, setPassword] = useState('');
-  const { login } = useContext(AuthContext); // contextowa funkcja login()
+  const { login } = useContext(AuthContext);
   const navigate = useNavigate();
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-
-    if (!username || !password) {
+    if (!identifier || !password) {
       toast.warning('Uzupełnij oba pola');
       return;
     }
-
     try {
-      const user = await loginFromAPI(username, password); // poprawiony wywołany login z API
-      login(user); // zapisanie użytkownika do contextu
+      const user = await loginFromAPI(identifier, password);
+      login(user);
       toast.success('Zalogowano pomyślnie!');
       navigate('/dashboard');
     } catch (err) {
@@ -37,9 +36,9 @@ export default function LoginPage() {
         <div style={{ marginBottom: '1rem' }}>
           <input
             type="text"
-            value={username}
-            onChange={(e) => setUsername(e.target.value)}
-            placeholder="Nazwa użytkownika"
+            value={identifier}
+            onChange={(e) => setIdentifier(e.target.value)}
+            placeholder="Email lub nazwa użytkownika"
             style={{ width: '100%', padding: '0.5rem' }}
           />
         </div>
@@ -52,10 +51,7 @@ export default function LoginPage() {
             style={{ width: '100%', padding: '0.5rem' }}
           />
         </div>
-        <button
-          type="submit"
-          style={{ width: '100%', padding: '0.5rem' }}
-        >
+        <button type="submit" style={{ width: '100%', padding: '0.5rem' }}>
           Zaloguj
         </button>
       </form>
