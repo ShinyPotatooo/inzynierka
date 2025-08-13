@@ -1,26 +1,31 @@
 // src/services/inventory.js
 import API from './api';
 
-// ✅ Pobierz wszystkie elementy magazynowe
-export async function fetchInventoryItems() {
-  const response = await API.get('/inventory');
-  return response.data.data.inventoryItems;
+/** Pobierz listę pozycji magazynowych */
+export async function fetchInventoryItems(params = {}) {
+  const res = await API.get('/inventory', { params });
+  if (!res.data?.success) throw new Error(res.data?.error || 'Błąd pobierania magazynu');
+  return res.data.data.inventoryItems;
 }
 
-// ✅ Utwórz nowy element magazynowy
-export async function createInventoryItem(item) {
-  const response = await API.post('/inventory', item);
-  return response.data.data.inventoryItem;
+/** Utwórz nową pozycję magazynową */
+export async function createInventoryItem(payload) {
+  const res = await API.post('/inventory', payload);
+  if (!res.data?.success) throw new Error(res.data?.error || 'Błąd tworzenia pozycji');
+  return res.data.data.inventoryItem;
 }
 
-// ✅ Aktualizuj element magazynowy
-export async function updateInventoryItem(id, updatedFields) {
-  const response = await API.put(`/inventory/${id}`, updatedFields);
-  return response.data.data.inventoryItem;
+/** Zaktualizuj pozycję magazynową */
+export async function updateInventoryItem(id, payload) {
+  const res = await API.put(`/inventory/${id}`, payload);
+  if (!res.data?.success) throw new Error(res.data?.error || 'Błąd aktualizacji pozycji');
+  return res.data.data.inventoryItem;
 }
 
-// ✅ Usuń element magazynowy
+/** Usuń pozycję magazynową */
 export async function deleteInventoryItem(id) {
-  const response = await API.delete(`/inventory/${id}`);
-  return response.data.data.message;
+  const res = await API.delete(`/inventory/${id}`);
+  if (!res.data?.success) throw new Error(res.data?.error || 'Błąd usuwania pozycji');
+  return res.data.data.message;
 }
+
