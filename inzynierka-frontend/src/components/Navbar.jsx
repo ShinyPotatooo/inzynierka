@@ -16,14 +16,13 @@ export default function Navbar() {
     <nav className="navbar">
       <NavLink to="/dashboard">Dashboard</NavLink>
       <NavLink to="/inventory">Magazyn</NavLink>
-      <NavLink to="/products">Produkty</NavLink> {/* ✅ DODANE */}
+      <NavLink to="/inventory/operations">Operacje</NavLink> {/* <— nowy link */}
+      <NavLink to="/products">Produkty</NavLink>
       <NavLink to="/admin">Admin</NavLink>
+
       <button onClick={handleLogout} style={{ marginLeft: '1rem' }}>
         Wyloguj
       </button>
     </nav>
   );
 }
-
-
-

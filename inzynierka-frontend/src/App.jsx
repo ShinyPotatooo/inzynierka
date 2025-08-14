@@ -1,11 +1,13 @@
 import React from 'react';
 import { Routes, Route, useLocation } from 'react-router-dom';
+
 import LoginPage from './pages/LoginPage';
 import InventoryPage from './pages/InventoryPage';
 import DashboardPage from './pages/DashboardPage';
 import AdminPanelPage from './pages/AdminPanelPage';
-import ProductPage from './pages/ProductPage'; // Dodawanie
-import ProductsListPage from './pages/ProductsListPage.jsx'; // Spis produktów
+import ProductsListPage from './pages/ProductsListPage'; // ✅ spis produktów (tylko raz)
+import ProductPage from './pages/ProductPage';           // ✅ dodawanie (tylko raz)
+import InventoryOperationsPage from './pages/InventoryOperationsPage';
 import Navbar from './components/Navbar';
 import { ToastContainer } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
@@ -75,6 +77,17 @@ function App() {
           }
         />
 
+        <Route
+  path="/inventory/operations"
+  element={
+    <PrivateRoute>
+      <LayoutWrapper>
+        <InventoryOperationsPage />
+      </LayoutWrapper>
+    </PrivateRoute>
+          }
+        />
+
         {/* Dodawanie nowego produktu */}
         <Route
           path="/products/new"
@@ -92,6 +105,7 @@ function App() {
 }
 
 export default App;
+
 
 
 

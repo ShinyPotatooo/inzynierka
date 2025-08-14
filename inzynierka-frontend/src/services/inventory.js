@@ -29,3 +29,10 @@ export async function deleteInventoryItem(id) {
   return res.data.data.message;
 }
 
+export async function listInventoryOperations(params = {}) {
+  // params: { page, limit, productId, operationType, userId, startDate, endDate }
+  const res = await API.get('/inventory/operations', { params });
+  if (!res.data?.success) throw new Error(res.data?.error || 'Błąd pobierania operacji');
+  return res.data.data; // { operations, pagination }
+}
+
