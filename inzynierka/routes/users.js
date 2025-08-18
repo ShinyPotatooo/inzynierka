@@ -4,6 +4,54 @@ const { User, ActivityLog } = require('../models');
 const bcrypt = require('bcrypt');
 const { Op } = require('sequelize');
 
+/**
+ * GET /api/users/options
+ * Lekkie podpowiedzi do wyszukiwania użytkowników (imię/nazwisko/login/email)
+ * Zwraca: { success: true, data: { options: [{ id, label }] } }
+ */
+router.get('/options', async (req, res) => {
+  try {
+    const query = String(req.query.query || '').trim();
+    const limit = Math.min(Math.max(parseInt(req.query.limit || '20', 10), 1), 50);
+
+    // Nie obciążaj bazy przy zbyt krótkim zapytaniu
+    if (query.length < 2) {
+      return res.json({ success: true, data: { options: [] } });
+    }
+
+    const where = {
+      [Op.or]: [
+        { username: { [Op.iLike]: `%${query}%` } },
+        { email: { [Op.iLike]: `%${query}%` } },
+        { firstName: { [Op.iLike]: `%${query}%` } },
+        { lastName: { [Op.iLike]: `%${query}%` } },
+      ],
+    };
+
+    const users = await User.findAll({
+      where,
+      attributes: ['id', 'username', 'email', 'firstName', 'lastName'],
+      order: [
+        ['lastName', 'ASC'],
+        ['firstName', 'ASC'],
+      ],
+      limit,
+    });
+
+    const options = users.map(u => {
+      const fn = u.firstName || '';
+      const ln = u.lastName || '';
+      const base = `${(fn + ' ' + ln).trim() || u.username}`;
+      return { id: u.id, label: `${base} (${u.username})` };
+    });
+
+    return res.json({ success: true, data: { options } });
+  } catch (err) {
+    console.error('Users options error:', err);
+    return res.status(500).json({ success: false, error: 'Internal server error' });
+  }
+});
+
 // GET /api/users
 router.get('/', async (req, res) => {
   try {
@@ -78,25 +126,18 @@ router.post('/', async (req, res) => {
   }
 });
 
-// PUT /api/users/:id
-// - aktualizacja danych
-// - USTAWIANIE HASŁA: zabezpieczenia
-//   * jeśli zmieniasz SOBIE hasło: wymagane currentPassword (stare hasło) LUB (jeśli jesteś adminem) currentAdminPassword
-//   * jeśli zmieniasz CUDZE hasło: musisz być adminem + currentAdminPassword
+// PUT /api/users/:id  (z pełną logiką zmiany hasła jak u Ciebie)
 router.put('/:id', async (req, res) => {
   try {
     const targetId = Number(req.params.id);
     const {
       username, email, firstName, lastName, role, password,
-      requesterId,          // id użytkownika wykonującego żądanie (do czasu JWT)
-      currentPassword,      // stare hasło przy zmianie "samemu sobie"
-      currentAdminPassword  // hasło admina przy zmianie komuś lub sobie (alternatywnie)
+      requesterId, currentPassword, currentAdminPassword
     } = req.body;
 
     const user = await User.findByPk(targetId);
     if (!user) return res.status(404).json({ success: false, error: 'User not found' });
 
-    // Walidacja unikalności username/email dla aktualizacji profilu
     if (username || email) {
       const existing = await User.findOne({
         where: {
@@ -109,7 +150,6 @@ router.put('/:id', async (req, res) => {
       if (existing) return res.status(400).json({ success: false, error: 'Username or email already exists' });
     }
 
-    // Przygotuj update
     const update = {};
     if (username) update.username = username;
     if (email) update.email = email;
@@ -117,46 +157,32 @@ router.put('/:id', async (req, res) => {
     if (lastName) update.lastName = lastName;
     if (role) update.role = role;
 
-    // ======= LOGIKA ZMIANY HASŁA =======
     if (typeof password === 'string') {
       if (password.trim().length < 8) {
         return res.status(400).json({ success: false, error: 'New password must be at least 8 characters' });
       }
-
       if (!requesterId) {
         return res.status(400).json({ success: false, error: 'requesterId is required to change password' });
       }
 
       const requester = await User.findByPk(Number(requesterId));
-      if (!requester) {
-        return res.status(403).json({ success: false, error: 'Requester not found' });
-      }
+      if (!requester) return res.status(403).json({ success: false, error: 'Requester not found' });
 
       const selfChange = requester.id === user.id;
-
       if (selfChange) {
-        // Zmiana hasła "samemu sobie":
-        // akceptujemy dwa warianty:
-        // 1) podane currentPassword i poprawne,
-        // 2) jeśli requester to admin i poda currentAdminPassword poprawne.
         let authorized = false;
-
         if (currentPassword) {
           const ok = await bcrypt.compare(currentPassword, user.password);
           if (ok) authorized = true;
         }
-
         if (!authorized && requester.role === 'admin' && currentAdminPassword) {
           const okAdmin = await bcrypt.compare(currentAdminPassword, requester.password);
           if (okAdmin) authorized = true;
         }
-
         if (!authorized) {
           return res.status(401).json({ success: false, error: 'Invalid current password' });
         }
       } else {
-        // Zmiana hasła komuś innemu:
-        // wymagaj uprawnień admina i poprawnego hasła admina
         if (requester.role !== 'admin') {
           return res.status(403).json({ success: false, error: 'Only admins can change other users passwords' });
         }
@@ -169,10 +195,8 @@ router.put('/:id', async (req, res) => {
         }
       }
 
-      // Hash nowego hasła
       update.password = await bcrypt.hash(password, 10);
     }
-    // ======= KONIEC LOGIKI HASŁA =======
 
     await user.update(update);
     const { password: _pw, ...userData } = user.toJSON();
@@ -183,7 +207,7 @@ router.put('/:id', async (req, res) => {
   }
 });
 
-// DELETE /api/users/:id — ochrona adminów (hasło + ostatni admin)
+// DELETE /api/users/:id
 router.delete('/:id', async (req, res) => {
   try {
     const { requesterId, currentAdminPassword } = req.body || {};
@@ -198,12 +222,10 @@ router.delete('/:id', async (req, res) => {
           error: 'Deleting an admin requires requesterId and currentAdminPassword'
         });
       }
-
       const requester = await User.findByPk(requesterId);
       if (!requester || requester.role !== 'admin') {
         return res.status(403).json({ success: false, error: 'Only admins can delete admins' });
       }
-
       const ok = await bcrypt.compare(currentAdminPassword, requester.password);
       if (!ok) return res.status(401).json({ success: false, error: 'Invalid admin password' });
 

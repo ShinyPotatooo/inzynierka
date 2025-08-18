@@ -1,6 +1,7 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useContext } from 'react';
 import { toast } from 'react-toastify';
 import { getProductOptions } from '../../services/products';
+import { AuthContext } from '../../context/AuthContext';
 
 const DEBOUNCE_MS = 350;
 
@@ -20,6 +21,9 @@ function beforeParen(label = '') {
 }
 
 const ItemForm = ({ onAdd }) => {
+  const { user } = useContext(AuthContext); // zakładam, że tu masz { id, ... }
+  const userId = user?.id ?? 1;             // fallback 1 (zgodny z backendem)
+
   const [productInput, setProductInput] = useState('');
   const [productId, setProductId] = useState(null);
   const [options, setOptions] = useState([]);
@@ -126,14 +130,16 @@ const ItemForm = ({ onAdd }) => {
       toast.error('Podaj dodatnią ilość');
       return;
     }
+    if (!location.trim()) {
+      toast.error('Lokalizacja jest wymagana');
+      return;
+    }
 
     let chosenId = productId;
     const q = productInput.trim();
 
-    // 1) jeszcze raz spróbuj lokalnie (na wypadek szybkiej selekcji z datalisty)
-    if (!chosenId) {
-      chosenId = findIdLocally(q);
-    }
+    // 1) jeszcze raz spróbuj lokalnie
+    if (!chosenId) chosenId = findIdLocally(q);
 
     // 2) spróbuj zdalnie (najpierw SKU, potem nazwa)
     if (!chosenId && q.length >= 2) {
@@ -154,8 +160,12 @@ const ItemForm = ({ onAdd }) => {
 
     onAdd({
       productId: chosenId,
-      location: location?.trim() || '',
-      quantity: parseInt(quantity, 10)
+      location: location.trim(),
+      quantity: parseInt(quantity, 10),
+      condition: 'new',
+      lastUpdatedBy: userId, // -> backend zapisze w logach
+      // opcjonalne pola możesz dodać w UI i przekazać tutaj w przyszłości:
+      // supplier, purchaseOrderNumber, batchNumber, notes, ...
     });
 
     // reset
@@ -199,6 +209,7 @@ const ItemForm = ({ onAdd }) => {
         onChange={(e) => setQuantity(e.target.value)}
         style={{ width: 90 }}
         min={1}
+        step={1}
       />
 
       <button type="submit" disabled={loading}>
@@ -209,5 +220,3 @@ const ItemForm = ({ onAdd }) => {
 };
 
 export default ItemForm;
-
-

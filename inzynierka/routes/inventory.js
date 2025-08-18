@@ -1,11 +1,36 @@
+// routes/inventory.js
 const express = require('express');
 const router = express.Router();
 const { Op, literal } = require('sequelize');
 const { InventoryItem, InventoryOperation, Product, User } = require('../models');
 
-/**
- * GET /api/inventory
- */
+/* ===========================
+   Helpers
+=========================== */
+function todayIsoDate() {
+  const d = new Date();
+  return d.toISOString().slice(0, 10); // YYYY-MM-DD
+}
+
+// BATCH-YYYY-<seq per product>
+async function generateBatchNumber(InventoryItemModel, productId) {
+  const year = new Date().getFullYear();
+  const count = await InventoryItemModel.count({ where: { productId } });
+  const seq = String(count + 1).padStart(3, '0');
+  return `BATCH-${year}-${seq}`;
+}
+
+// PO-YYYY-<global seq>
+async function generatePurchaseOrderNumber(InventoryItemModel) {
+  const year = new Date().getFullYear();
+  const total = await InventoryItemModel.count();
+  const seq = String(total + 1).padStart(3, '0');
+  return `PO-${year}-${seq}`;
+}
+
+/* ===========================
+   GET /api/inventory
+=========================== */
 router.get('/', async (req, res) => {
   try {
     const {
@@ -26,6 +51,7 @@ router.get('/', async (req, res) => {
     if (condition) where.condition = condition;
     if (supplier) where.supplier = { [Op.iLike]: `%${supplier}%` };
     if (String(lowStock) === 'true') {
+      // porównanie do pola z dołączonego Product (alias "product")
       where.quantity = { [Op.lte]: literal('"product"."minStockLevel"') };
     }
 
@@ -66,9 +92,9 @@ router.get('/', async (req, res) => {
   }
 });
 
-/**
- * GET /api/inventory/summary
- */
+/* ===========================
+   GET /api/inventory/summary
+=========================== */
 router.get('/summary', async (_req, res) => {
   try {
     const totalItems = await InventoryItem.count();
@@ -89,7 +115,10 @@ router.get('/summary', async (_req, res) => {
       include: [{ model: Product, as: 'product', attributes: ['cost'] }],
     });
 
-    const totalCost = all.reduce((s, it) => s + it.quantity * (it.product.cost || 0), 0);
+    const totalCost = all.reduce(
+      (s, it) => s + it.quantity * (it.product.cost || 0),
+      0
+    );
 
     res.json({
       success: true,
@@ -108,10 +137,10 @@ router.get('/summary', async (_req, res) => {
   }
 });
 
-/**
- * GET /api/inventory/operations
- * Filtry: productId, operationType, userId (alias: performedBy), startDate, endDate
- */
+/* ===========================
+   GET /api/inventory/operations
+   Filtry: productId, operationType, userId|performedBy, startDate, endDate
+=========================== */
 router.get('/operations', async (req, res) => {
   try {
     const {
@@ -119,8 +148,8 @@ router.get('/operations', async (req, res) => {
       limit = 10,
       productId,
       operationType,
-      userId,         // preferowane
-      performedBy,    // alias wstecznej kompatybilności
+      userId,
+      performedBy,
       startDate,
       endDate,
     } = req.query;
@@ -170,9 +199,9 @@ router.get('/operations', async (req, res) => {
   }
 });
 
-/**
- * GET /api/inventory/:id
- */
+/* ===========================
+   GET /api/inventory/:id
+=========================== */
 router.get('/:id', async (req, res) => {
   try {
     const item = await InventoryItem.findByPk(req.params.id, {
@@ -189,7 +218,10 @@ router.get('/:id', async (req, res) => {
       ],
     });
 
-    if (!item) return res.status(404).json({ success: false, error: 'Inventory item not found' });
+    if (!item) {
+      return res.status(404).json({ success: false, error: 'Inventory item not found' });
+    }
+
     res.json({ success: true, data: { inventoryItem: item } });
   } catch (err) {
     console.error('Get inventory item error:', err);
@@ -197,11 +229,10 @@ router.get('/:id', async (req, res) => {
   }
 });
 
-/**
- * POST /api/inventory
- * Tworzy pozycję i zapisuje operację "in".
- */
-// POST /api/inventory - Create new inventory item
+/* ===========================
+   POST /api/inventory
+   Tworzy pozycję + loguje operację "in"
+=========================== */
 router.post('/', async (req, res) => {
   try {
     const {
@@ -216,110 +247,133 @@ router.post('/', async (req, res) => {
       purchaseOrderNumber,
       condition = 'new',
       notes,
-      lastUpdatedBy = 1 // TODO: Get from JWT when implemented
+      lastUpdatedBy, // z JWT; fallback niżej
     } = req.body;
 
     if (!productId || !location || !quantity) {
       return res.status(400).json({
         success: false,
-        error: 'Product ID, location, and quantity are required'
+        error: 'Product ID, location, and quantity are required',
       });
     }
 
-    // Check if product exists
     const product = await Product.findByPk(productId);
     if (!product) {
-      return res.status(400).json({
-        success: false,
-        error: 'Product not found'
-      });
+      return res.status(400).json({ success: false, error: 'Product not found' });
     }
 
-    // Create inventory item
-    const inventoryItem = await InventoryItem.create({
+    // sensowne wartości domyślne zamiast NULL
+    const ensuredBatch = batchNumber || await generateBatchNumber(InventoryItem, productId);
+    const ensuredPO = purchaseOrderNumber || await generatePurchaseOrderNumber(InventoryItem);
+    const ensuredSupplier = supplier ?? 'Nieznany';
+    const ensuredNotes = notes ?? '';
+    const userId = lastUpdatedBy ? Number(lastUpdatedBy) : 1;
+
+    const item = await InventoryItem.create({
       productId,
       location,
       quantity: parseInt(quantity, 10),
-      reservedQuantity: parseInt(reservedQuantity, 10),
-      batchNumber,
+      reservedQuantity: parseInt(reservedQuantity, 10) || 0,
+      batchNumber: ensuredBatch,
       expiryDate: expiryDate ? new Date(expiryDate) : null,
       manufacturingDate: manufacturingDate ? new Date(manufacturingDate) : null,
-      supplier,
-      purchaseOrderNumber,
+      supplier: ensuredSupplier,
+      purchaseOrderNumber: ensuredPO,
       condition,
-      notes,
-      lastUpdatedBy
+      notes: ensuredNotes,
+      lastUpdatedBy: userId,
     });
 
-    // Create initial operation record
-  await InventoryOperation.create({
-  inventoryItemId: inventoryItem.id,
-  productId,
-  operationType: 'in',
-  quantity: parseInt(quantity, 10),
-  userId: lastUpdatedBy,        // <-- tu ma być userId
-  operationDate: new Date(),
-  notes: 'Initial stock entry'
-});
+    // log operacji "in"
+    await InventoryOperation.create({
+      inventoryItemId: item.id,
+      productId,
+      operationType: 'in',
+      quantity: parseInt(quantity, 10),
+      userId,
+      operationDate: new Date(),
+      notes: 'Initial stock entry',
+    });
 
-    // ⬇️ KLUCZ: zwróć obiekt z dołączonym produktem
-    const inventoryItemWithProduct = await InventoryItem.findByPk(inventoryItem.id, {
-      include: [
-        {
-          model: Product,
-          as: 'product',
-          attributes: ['id', 'sku', 'name', 'category', 'brand']
-        }
-      ]
+    const itemWithProduct = await InventoryItem.findByPk(item.id, {
+      include: [{ model: Product, as: 'product', attributes: ['id', 'sku', 'name', 'category', 'brand'] }],
     });
 
     res.status(201).json({
       success: true,
-      data: {
-        inventoryItem: inventoryItemWithProduct,
-        message: 'Inventory item created successfully'
-      }
+      data: { inventoryItem: itemWithProduct, message: 'Inventory item created successfully' },
     });
-
   } catch (error) {
     console.error('Create inventory item error:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Internal server error'
-    });
+    res.status(500).json({ success: false, error: 'Internal server error' });
   }
 });
 
-/**
- * PUT /api/inventory/:id
- */
+/* ===========================
+   PUT /api/inventory/:id
+   Aktualizacja + auto-log korekty ilości
+=========================== */
 router.put('/:id', async (req, res) => {
   try {
     const item = await InventoryItem.findByPk(req.params.id);
-    if (!item) return res.status(404).json({ success: false, error: 'Inventory item not found' });
+    if (!item) {
+      return res.status(404).json({ success: false, error: 'Inventory item not found' });
+    }
 
     const update = { ...req.body };
-    if (update.quantity != null) update.quantity = parseInt(update.quantity);
-    if (update.reservedQuantity != null) update.reservedQuantity = parseInt(update.reservedQuantity);
+    const userId = update.lastUpdatedBy ? Number(update.lastUpdatedBy) : 1;
+
+    // wykrywanie zmiany ilości
+    let willLog = false;
+    let delta = 0;
+
+    if (update.quantity != null) {
+      const newQty = parseInt(update.quantity, 10);
+      delta = newQty - item.quantity;
+      if (delta !== 0) willLog = true;
+      update.quantity = newQty;
+    }
+    if (update.reservedQuantity != null) {
+      update.reservedQuantity = parseInt(update.reservedQuantity, 10);
+    }
     if (update.expiryDate) update.expiryDate = new Date(update.expiryDate);
     if (update.manufacturingDate) update.manufacturingDate = new Date(update.manufacturingDate);
 
+    update.lastUpdatedBy = userId;
+
     await item.update(update);
 
-    res.json({ success: true, data: { inventoryItem: item, message: 'Inventory item updated successfully' } });
+    if (willLog) {
+      await InventoryOperation.create({
+        inventoryItemId: item.id,
+        productId: item.productId,
+        operationType: 'adjust',
+        quantity: Math.abs(delta),
+        userId,
+        operationDate: new Date(),
+        notes: `Auto-adjust: ${delta > 0 ? '+' : ''}${delta}, new qty = ${item.quantity}`,
+      });
+    }
+
+    res.json({
+      success: true,
+      data: { inventoryItem: item, message: 'Inventory item updated successfully' },
+    });
   } catch (err) {
     console.error('Update inventory item error:', err);
     res.status(500).json({ success: false, error: 'Internal server error' });
   }
 });
 
-/**
- * DELETE /api/inventory/:id
- */
+/* ===========================
+   DELETE /api/inventory/:id
+=========================== */
 router.delete('/:id', async (req, res) => {
   try {
     const item = await InventoryItem.findByPk(req.params.id);
-    if (!item) return res.status(404).json({ success: false, error: 'Inventory item not found' });
+    if (!item) {
+      return res.status(404).json({ success: false, error: 'Inventory item not found' });
+    }
 
     if (item.quantity > 0) {
       return res.status(400).json({ success: false, error: 'Cannot delete inventory item with stock' });
@@ -333,24 +387,28 @@ router.delete('/:id', async (req, res) => {
   }
 });
 
-/**
- * POST /api/inventory/operations
- * Tworzy operację i aktualizuje stan pozycji.
- */
+/* ===========================
+   POST /api/inventory/operations
+   Tworzenie operacji + aktualizacja stanu
+=========================== */
 router.post('/operations', async (req, res) => {
   try {
     const {
       inventoryItemId,
-      operationType, // 'in' | 'out' | 'transfer' | ...
+      operationType,        // 'in' | 'out' | 'transfer' | 'adjust' ...
       quantity,
-      userId,        // wymagane (wcześniej performedBy)
+      userId,               // preferowane (wcześniej performedBy)
       operationDate = new Date(),
       notes,
     } = req.body;
 
     if (!inventoryItemId || !operationType || !quantity) {
-      return res.status(400).json({ success: false, error: 'Inventory item ID, operation type, and quantity are required' });
+      return res.status(400).json({
+        success: false,
+        error: 'Inventory item ID, operation type, and quantity are required',
+      });
     }
+
     const item = await InventoryItem.findByPk(inventoryItemId);
     if (!item) return res.status(400).json({ success: false, error: 'Inventory item not found' });
 
@@ -362,19 +420,26 @@ router.post('/operations', async (req, res) => {
       inventoryItemId,
       productId: item.productId,
       operationType,
-      quantity: parseInt(quantity),
+      quantity: parseInt(quantity, 10),
       userId: userId ? Number(userId) : 1,
       operationDate: new Date(operationDate),
       notes,
     });
 
     let newQty = item.quantity;
-    if (operationType === 'in') newQty += parseInt(quantity);
-    if (operationType === 'out') newQty -= parseInt(quantity);
+    if (operationType === 'in') newQty += parseInt(quantity, 10);
+    if (operationType === 'out') newQty -= parseInt(quantity, 10);
+    if (operationType === 'adjust') newQty += parseInt(quantity, 10); // konwencja: dodatnia „adjust” dodaje
 
-    await item.update({ quantity: newQty, lastUpdatedBy: userId ? Number(userId) : 1 });
+    await item.update({
+      quantity: newQty,
+      lastUpdatedBy: userId ? Number(userId) : 1,
+    });
 
-    res.status(201).json({ success: true, data: { operation: op, message: 'Inventory operation created successfully' } });
+    res.status(201).json({
+      success: true,
+      data: { operation: op, message: 'Inventory operation created successfully' },
+    });
   } catch (err) {
     console.error('Create operation error:', err);
     res.status(500).json({ success: false, error: 'Internal server error' });
@@ -382,3 +447,4 @@ router.post('/operations', async (req, res) => {
 });
 
 module.exports = router;
+

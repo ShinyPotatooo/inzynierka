@@ -1,19 +1,24 @@
-import React from 'react';
+import React, { useContext } from 'react';
 import PropTypes from 'prop-types';
 import { toast } from 'react-toastify';
+import { AuthContext } from '../../context/AuthContext';
 
 const ItemTable = ({ items, onDelete, onUpdate }) => {
+  const { user } = useContext(AuthContext);
+  const userId = user?.id ?? 1;
+
   const handleConditionChange = (id, newCondition) => {
-    onUpdate(id, { condition: newCondition });
+    onUpdate(id, { condition: newCondition, lastUpdatedBy: userId });
     toast.info(`Zmieniono stan produktu ID ${id} na "${newCondition}"`);
   };
 
   const handleQuantityChange = (id, newQuantity) => {
     const parsed = Number(newQuantity);
+    if (Number.isNaN(parsed)) return;
     if (parsed < 0) {
       return toast.warning('Ilość nie może być ujemna!');
     }
-    onUpdate(id, { quantity: parsed });
+    onUpdate(id, { quantity: parsed, lastUpdatedBy: userId });
     if (parsed === 0) {
       toast.info(`Ilość dla produktu ID ${id} ustawiona na 0. Możesz teraz usunąć pozycję.`);
     }
@@ -46,11 +51,16 @@ const ItemTable = ({ items, onDelete, onUpdate }) => {
           items.map((item) => (
             <tr key={item.id}>
               <td>{item.id}</td>
-              <td>{item.product?.name || 'Nieznany'}</td>
+              <td>
+                {item.product?.name || 'Nieznany'}
+                {item.product?.sku ? ` (${item.product.sku})` : ''}
+              </td>
               <td>
                 <input
                   type="number"
                   value={item.quantity}
+                  min={0}
+                  step={1}
                   onChange={(e) => handleQuantityChange(item.id, e.target.value)}
                   style={{ width: '80px' }}
                 />
@@ -96,6 +106,7 @@ ItemTable.propTypes = {
       condition: PropTypes.string,
       product: PropTypes.shape({
         name: PropTypes.string,
+        sku: PropTypes.string,
       }),
     })
   ).isRequired,
@@ -104,7 +115,3 @@ ItemTable.propTypes = {
 };
 
 export default ItemTable;
-
-
-
-

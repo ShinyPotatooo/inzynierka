@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useContext, useEffect, useState } from 'react';
 import ItemTable from '../components/Inventory/ItemTable';
 import ItemForm from '../components/Inventory/ItemForm';
 import {
@@ -8,8 +8,10 @@ import {
   deleteInventoryItem,
 } from '../services/inventory';
 import { toast } from 'react-toastify';
+import { AuthContext } from '../context/AuthContext';
 
 const InventoryPage = () => {
+  const { user } = useContext(AuthContext); // <<— aktualny użytkownik
   const [items, setItems] = useState([]);
   const [logs, setLogs] = useState([]);
 
@@ -34,21 +36,27 @@ const InventoryPage = () => {
         return;
       }
 
-      const itemToSend = {
+      const payload = {
         ...newItem,
         productId: Number(newItem.productId),
         quantity: Number(newItem.quantity),
         condition: newItem.condition || 'new',
-        // opcjonalnie: lastUpdatedBy: user.id
+        lastUpdatedBy: user?.id ?? 1, // <<— zapisujemy kto dodał
       };
 
-      const created = await createInventoryItem(itemToSend);
+      const created = await createInventoryItem(payload);
+      // API zwraca inventoryItem z dołączonym produktem
       setItems((prev) => [...prev, created]);
-      setLogs((prev) => [...prev, `✅ Dodano produktID=${created.productId} (pozycja ID: ${created.id})`]);
+      setLogs((prev) => [
+        ...prev,
+        `✅ Dodano produktID=${created.productId} (pozycja ID: ${created.id})`,
+      ]);
       toast.success('Produkt dodany!');
     } catch (err) {
       console.error('Błąd dodawania:', err);
-      toast.error(`Błąd dodawania produktu: ${err.response?.data?.error || err.message}`);
+      toast.error(
+        `Błąd dodawania produktu: ${err.response?.data?.error || err.message}`
+      );
     }
   };
 
@@ -59,12 +67,16 @@ const InventoryPage = () => {
       const toSend = {
         ...updatedFields,
         quantity:
-          updatedFields.quantity !== undefined ? Number(updatedFields.quantity) : undefined,
+          updatedFields.quantity !== undefined
+            ? Number(updatedFields.quantity)
+            : undefined,
+        lastUpdatedBy: user?.id ?? 1,
       };
 
       const updated = await updateInventoryItem(id, toSend);
 
-      const merged = { ...updated, product: currentItem?.product || updated.product };
+      // zabezpieczenie, żeby nie zgubić product przy merge
+      const merged = { ...updated, product: updated.product || currentItem?.product };
       setItems((prev) => prev.map((i) => (i.id === id ? merged : i)));
 
       const fieldInfo = Object.entries(updatedFields)
@@ -74,7 +86,9 @@ const InventoryPage = () => {
       toast.success(`Produkt zaktualizowany (ID: ${id})`);
     } catch (err) {
       console.error('Błąd aktualizacji:', err);
-      toast.error(`Błąd aktualizacji produktu: ${err.response?.data?.error || err.message}`);
+      toast.error(
+        `Błąd aktualizacji produktu: ${err.response?.data?.error || err.message}`
+      );
     }
   };
 
@@ -99,9 +113,9 @@ const InventoryPage = () => {
   const exportToCSV = () => {
     if (items.length === 0) return toast.warning('Brak danych do eksportu.');
 
-    const header = ['ID', 'ProduktID', 'Ilość', 'Lokalizacja', 'Status'];
-    const rows = items.map(({ id, productId, quantity, location, condition }) =>
-      [id, productId, quantity, location, condition].join(',')
+    const header = ['ID', 'ProduktID', 'Nazwa', 'Ilość', 'Lokalizacja', 'Status'];
+    const rows = items.map(({ id, productId, product, quantity, location, condition }) =>
+      [id, productId, product?.name || '', quantity, location, condition].join(',')
     );
     const csvContent = [header.join(','), ...rows].join('\n');
 
@@ -155,5 +169,3 @@ const InventoryPage = () => {
 };
 
 export default InventoryPage;
-
-
