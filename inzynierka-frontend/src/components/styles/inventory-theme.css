@@ -1,0 +1,137 @@
+:root {
+  --bg: #f7f8fb;
+  --panel: #ffffff;
+  --text: #1f2937;
+  --muted: #6b7280;
+  --primary: #2563eb;
+  --primary-weak: #e8f0ff;
+  --border: #e5e7eb;
+  --success: #10b981;
+  --danger: #ef4444;
+  --warning: #f59e0b;
+  --chip: #eef2ff;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+}
+
+.inv-page {
+  padding: 2rem 1.5rem;
+}
+
+.inv-header {
+  margin-bottom: 1rem;
+}
+
+.inv-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 1rem;
+}
+
+.inv-toolbar {
+  display: grid;
+  grid-template-columns: 1.2fr 1fr 0.8fr 1fr auto auto auto;
+  gap: 0.6rem;
+  align-items: end;
+  margin-bottom: 0.75rem;
+}
+
+.inv-toolbar input,
+.inv-toolbar select,
+.inv-toolbar button {
+  height: 36px;
+}
+
+.inv-btn {
+  background: var(--primary);
+  color: #fff;
+  border: 0;
+  border-radius: 8px;
+  padding: 0 12px;
+  cursor: pointer;
+}
+.inv-btn--ghost {
+  background: transparent;
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+.inv-btn--csv {
+  background: var(--primary-weak);
+  color: var(--primary);
+  border: 1px solid #cfe0ff;
+}
+.inv-btn:disabled { opacity: .6; cursor: not-allowed; }
+
+.inv-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+.inv-table th, .inv-table td {
+  padding: .55rem .6rem;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+.inv-table thead th {
+  position: sticky;
+  top: 0;
+  background: var(--panel);
+  z-index: 1;
+}
+.inv-table tbody tr:nth-child(even) {
+  background: #fafafa;
+}
+
+.chip {
+  display: inline-block;
+  min-width: 34px;
+  text-align: center;
+  padding: .15rem .45rem;
+  border-radius: 9999px;
+  background: var(--chip);
+  font-size: .85rem;
+}
+
+.badge {
+  padding: .1rem .35rem;
+  border-radius: 999rem;
+  border: 1px solid var(--border);
+  font-size: .82rem;
+  color: var(--muted);
+}
+
+.inv-actions {
+  display: flex;
+  gap: .35rem;
+  flex-wrap: wrap;
+}
+
+.inv-pagination {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: .75rem;
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem 2rem;
+  margin-top: 1rem;
+}
+.form-grid .field {
+  display: flex;
+  flex-direction: column;
+  gap: .35rem;
+}
+.field input, .field select, .field textarea {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: .55rem .65rem;
+  background: #fff;
+}
+.field small { color: var(--muted); }

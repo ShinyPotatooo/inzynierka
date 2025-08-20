@@ -1,12 +1,13 @@
 import React from 'react';
 import { Routes, Route, useLocation } from 'react-router-dom';
-
 import LoginPage from './pages/LoginPage';
-import InventoryPage from './pages/InventoryPage';
+import InventoryListPage from './pages/InventoryListPage';       // ⬅️ nowy
+import InventoryItemFormPage from './pages/InventoryItemFormPage'; // ⬅️ nowy
+import InventoryItemDetailsPage from './pages/InventoryItemDetailsPage'; // ⬅️ nowy
 import DashboardPage from './pages/DashboardPage';
 import AdminPanelPage from './pages/AdminPanelPage';
-import ProductsListPage from './pages/ProductsListPage'; // ✅ spis produktów (tylko raz)
-import ProductPage from './pages/ProductPage';           // ✅ dodawanie (tylko raz)
+import ProductsListPage from './pages/ProductsListPage';
+import ProductPage from './pages/ProductPage';
 import InventoryOperationsPage from './pages/InventoryOperationsPage';
 import Navbar from './components/Navbar';
 import { ToastContainer } from 'react-toastify';
@@ -25,7 +26,7 @@ function LayoutWrapper({ children }) {
   );
 }
 
-function App() {
+export default function App() {
   return (
     <AuthProvider>
       <ToastContainer />
@@ -37,7 +38,27 @@ function App() {
           element={
             <PrivateRoute>
               <LayoutWrapper>
-                <InventoryPage />
+                <InventoryListPage />
+              </LayoutWrapper>
+            </PrivateRoute>
+          }
+        />
+        <Route
+          path="/inventory/new"
+          element={
+            <PrivateRoute>
+              <LayoutWrapper>
+                <InventoryItemFormPage />
+              </LayoutWrapper>
+            </PrivateRoute>
+          }
+        />
+        <Route
+          path="/inventory/:id"
+          element={
+            <PrivateRoute>
+              <LayoutWrapper>
+                <InventoryItemDetailsPage />
               </LayoutWrapper>
             </PrivateRoute>
           }
@@ -65,7 +86,6 @@ function App() {
           }
         />
 
-        {/* Spis produktów */}
         <Route
           path="/products"
           element={
@@ -78,17 +98,16 @@ function App() {
         />
 
         <Route
-  path="/inventory/operations"
-  element={
-    <PrivateRoute>
-      <LayoutWrapper>
-        <InventoryOperationsPage />
-      </LayoutWrapper>
-    </PrivateRoute>
+          path="/inventory/operations"
+          element={
+            <PrivateRoute>
+              <LayoutWrapper>
+                <InventoryOperationsPage />
+              </LayoutWrapper>
+            </PrivateRoute>
           }
         />
 
-        {/* Dodawanie nowego produktu */}
         <Route
           path="/products/new"
           element={
@@ -104,7 +123,6 @@ function App() {
   );
 }
 
-export default App;
 
 
 
