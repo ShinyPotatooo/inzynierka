@@ -86,9 +86,11 @@ export default function InventoryItemDetailsPage() {
       <div style={{ marginBottom: 12 }}>
         <Link to="/inventory">← wróć do magazynu</Link>
       </div>
+
       <h1>Pozycja #{item.id}</h1>
       <p>
-        <strong>Produkt:</strong> {item.product?.name} {item.product?.sku ? `(${item.product.sku})` : ''}
+        <strong>Produkt:</strong> {item.product?.name}{' '}
+        {item.product?.sku ? `(${item.product.sku})` : ''}
       </p>
 
       <div style={{ margin: '16px 0', padding: 16, border: '1px solid #eee', borderRadius: 8 }}>
@@ -235,6 +237,8 @@ export default function InventoryItemDetailsPage() {
     </div>
   );
 }
+
+
 
 
 

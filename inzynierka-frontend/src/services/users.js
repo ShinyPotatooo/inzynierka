@@ -48,3 +48,4 @@ export async function updateUserProfile(id, patch) {
   if (!res.data?.success) throw new Error(res.data?.error || 'Błąd edycji użytkownika');
   return res.data.data.user;
 }
+

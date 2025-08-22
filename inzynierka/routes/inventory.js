@@ -316,54 +316,49 @@ router.post('/', async (req, res) => {
 router.put('/:id', async (req, res) => {
   try {
     const item = await InventoryItem.findByPk(req.params.id);
-    if (!item) {
-      return res.status(404).json({ success: false, error: 'Inventory item not found' });
-    }
+    if (!item) return res.status(404).json({ success: false, error: 'Inventory item not found' });
 
+    // zapamiętaj stan sprzed zmiany
+    const prevQty = item.quantity;
+
+    // przygotuj update
     const update = { ...req.body };
-    const userId = update.lastUpdatedBy ? Number(update.lastUpdatedBy) : 1;
-
-    // wykrywanie zmiany ilości
-    let willLog = false;
-    let delta = 0;
-
-    if (update.quantity != null) {
-      const newQty = parseInt(update.quantity, 10);
-      delta = newQty - item.quantity;
-      if (delta !== 0) willLog = true;
-      update.quantity = newQty;
-    }
-    if (update.reservedQuantity != null) {
-      update.reservedQuantity = parseInt(update.reservedQuantity, 10);
-    }
+    if (update.quantity != null) update.quantity = parseInt(update.quantity, 10);
+    if (update.reservedQuantity != null) update.reservedQuantity = parseInt(update.reservedQuantity, 10);
     if (update.expiryDate) update.expiryDate = new Date(update.expiryDate);
     if (update.manufacturingDate) update.manufacturingDate = new Date(update.manufacturingDate);
 
-    update.lastUpdatedBy = userId;
+    // ustaw kto zmienia (jeśli przyszło z frontu)
+    if (req.body.lastUpdatedBy != null) {
+      update.lastUpdatedBy = Number(req.body.lastUpdatedBy);
+    }
 
     await item.update(update);
 
-    if (willLog) {
+    // jeśli ilość się zmieniła — zapisz operację "adjustment"
+    if (update.quantity != null && update.quantity !== prevQty) {
+      const delta = update.quantity - prevQty; // + dodatnia, - ujemna
       await InventoryOperation.create({
         inventoryItemId: item.id,
         productId: item.productId,
-        operationType: 'adjust',
+        operationType: 'adjustment',
         quantity: Math.abs(delta),
-        userId,
+        userId: update.lastUpdatedBy ?? 1, // fallback jeśli nie podano
         operationDate: new Date(),
-        notes: `Auto-adjust: ${delta > 0 ? '+' : ''}${delta}, new qty = ${item.quantity}`,
+        notes: `Manual quantity change via UI: ${prevQty} → ${update.quantity}`
       });
     }
 
     res.json({
       success: true,
-      data: { inventoryItem: item, message: 'Inventory item updated successfully' },
+      data: { inventoryItem: item, message: 'Inventory item updated successfully' }
     });
   } catch (err) {
     console.error('Update inventory item error:', err);
     res.status(500).json({ success: false, error: 'Internal server error' });
   }
 });
+
 
 /* ===========================
    DELETE /api/inventory/:id
@@ -391,13 +386,17 @@ router.delete('/:id', async (req, res) => {
    POST /api/inventory/operations
    Tworzenie operacji + aktualizacja stanu
 =========================== */
+/* ===========================
+   POST /api/inventory/operations
+   Tworzenie operacji + aktualizacja stanu
+=========================== */
 router.post('/operations', async (req, res) => {
   try {
     const {
       inventoryItemId,
-      operationType,        // 'in' | 'out' | 'transfer' | 'adjust' ...
+      operationType,        // 'in' | 'out'
       quantity,
-      userId,               // preferowane (wcześniej performedBy)
+      userId,
       operationDate = new Date(),
       notes,
     } = req.body;
@@ -409,32 +408,36 @@ router.post('/operations', async (req, res) => {
       });
     }
 
+    if (!['in', 'out'].includes(operationType)) {
+      return res.status(400).json({ success: false, error: 'Unsupported operation type' });
+    }
+
     const item = await InventoryItem.findByPk(inventoryItemId);
     if (!item) return res.status(400).json({ success: false, error: 'Inventory item not found' });
 
-    if (operationType === 'out' && Number(quantity) > (item.quantity - item.reservedQuantity)) {
+    const q = parseInt(quantity, 10);
+    const actor = userId ? Number(userId) : 1;
+    const quantityBefore = item.quantity;
+
+    if (operationType === 'out' && q > (item.quantity - item.reservedQuantity)) {
       return res.status(400).json({ success: false, error: 'Insufficient available quantity' });
     }
+
+    const quantityAfter = operationType === 'in' ? quantityBefore + q : quantityBefore - q;
 
     const op = await InventoryOperation.create({
       inventoryItemId,
       productId: item.productId,
       operationType,
-      quantity: parseInt(quantity, 10),
-      userId: userId ? Number(userId) : 1,
+      quantity: q,
+      userId: actor,
       operationDate: new Date(operationDate),
       notes,
+      quantityBefore,
+      quantityAfter,
     });
 
-    let newQty = item.quantity;
-    if (operationType === 'in') newQty += parseInt(quantity, 10);
-    if (operationType === 'out') newQty -= parseInt(quantity, 10);
-    if (operationType === 'adjust') newQty += parseInt(quantity, 10); // konwencja: dodatnia „adjust” dodaje
-
-    await item.update({
-      quantity: newQty,
-      lastUpdatedBy: userId ? Number(userId) : 1,
-    });
+    await item.update({ quantity: quantityAfter, lastUpdatedBy: actor });
 
     res.status(201).json({
       success: true,
@@ -445,6 +448,7 @@ router.post('/operations', async (req, res) => {
     res.status(500).json({ success: false, error: 'Internal server error' });
   }
 });
+
 
 module.exports = router;
 

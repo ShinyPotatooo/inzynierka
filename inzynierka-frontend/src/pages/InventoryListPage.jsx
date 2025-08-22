@@ -1,5 +1,5 @@
 // src/pages/InventoryListPage.jsx
-import React, { useContext, useEffect, useMemo, useState } from 'react';
+import React, { useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import { AuthContext } from '../context/AuthContext';
@@ -7,8 +7,9 @@ import {
   fetchInventoryItems,
   updateInventoryItem,
   deleteInventoryItem,
-  createInventoryOperation,
 } from '../services/inventory';
+import { getProductOptions } from '../services/products';
+import OperationModal from '../components/Inventory/OperationModal';
 
 const sorters = [
   { value: 'idAsc', label: 'ID rosnąco' },
@@ -17,9 +18,16 @@ const sorters = [
 
 function bySorter(v) {
   if (v === 'idDesc') return (a, b) => b.id - a.id;
-  // default
   return (a, b) => a.id - b.id;
 }
+
+const DEBOUNCE_MS = 300;
+const normalize = (s = '') => String(s).toLowerCase().replace(/\s+/g, ' ').trim();
+const extractSku = (label = '') => {
+  const m = String(label).match(/\(([^()]+)\)\s*$/);
+  return m ? m[1].trim() : null;
+};
+const nameBeforeParen = (label = '') => String(label).split('(')[0].trim();
 
 export default function InventoryListPage() {
   const { user } = useContext(AuthContext);
@@ -29,27 +37,38 @@ export default function InventoryListPage() {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  // filtry
-  const [q, setQ] = useState('');
+  // --- FILTRY ---
+  const [productInput, setProductInput] = useState('');
+  const [productId, setProductId] = useState(null);
+  const [prodOptions, setProdOptions] = useState([]);
   const [loc, setLoc] = useState('');
   const [supplier, setSupplier] = useState('');
   const [onlyLow, setOnlyLow] = useState(false);
   const [sort, setSort] = useState('idAsc');
 
-  // edycja wiersza
+  // --- EDYCJA ---
   const [editId, setEditId] = useState(null);
   const [draft, setDraft] = useState({});
 
+  // --- MODAL OPERACJI ---
+  const [opModal, setOpModal] = useState({ open: false, type: 'in', item: null });
+  const openOp = (row, type) => setOpModal({ open: true, type, item: row });
+  const closeOp = () => setOpModal({ open: false, type: 'in', item: null });
+
+  // --- LOAD LISTY ---
   const load = async () => {
     try {
       setLoading(true);
       const data = await fetchInventoryItems({
-        product: q || undefined,
+        productId: productId || undefined,
         location: loc || undefined,
         supplier: supplier || undefined,
         lowStock: onlyLow || undefined,
       });
       setItems(data || []);
+      if (onlyLow && (!data || data.length === 0)) {
+        toast.info('Brak pozycji o niskim stanie.');
+      }
     } catch (e) {
       console.error(e);
       toast.error(e.message || 'Błąd ładowania magazynu');
@@ -68,7 +87,85 @@ export default function InventoryListPage() {
     return [...items].sort(srt);
   }, [items, sort]);
 
-  /** start edycji */
+  // --- AUTOCOMPLETE PRODUKTU (debounce + lokalne dopasowanie) ---
+  const timer = useRef(null);
+  const inflight = useRef(null);
+
+  const findLocalId = (q, list = prodOptions) => {
+    const n = normalize(q);
+    const sku = extractSku(q);
+
+    const exact = list.find(o => normalize(o.label) === n);
+    if (exact) return exact.id;
+
+    if (sku) {
+      const bySku = list.find(o => normalize(o.label).endsWith(`(${normalize(sku)})`));
+      if (bySku) return bySku.id;
+    }
+
+    const fuzzy = list.filter(o => normalize(o.label).includes(n));
+    if (fuzzy.length === 1) return fuzzy[0].id;
+
+    return null;
+  };
+
+  useEffect(() => {
+    const q = productInput.trim();
+    if (timer.current) clearTimeout(timer.current);
+
+    if (q.length < 2) {
+      setProdOptions([]);
+      setProductId(null);
+      return;
+    }
+
+    timer.current = setTimeout(async () => {
+      try {
+        // anulowanie poprzedniego zapytania (lokalnie)
+        if (inflight.current) inflight.current.abort();
+        inflight.current = new AbortController();
+
+        const sku = extractSku(q);
+        const search = sku || nameBeforeParen(q) || q;
+
+        const list = await getProductOptions(search, 20, { signal: inflight.current.signal });
+        setProdOptions(list || []);
+        setProductId(findLocalId(q, list || []));
+      } catch (e) {
+        // jeśli przerwane — ignoruj
+        setProdOptions([]);
+      } finally {
+        inflight.current = null;
+      }
+    }, DEBOUNCE_MS);
+
+    return () => clearTimeout(timer.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [productInput]);
+
+  const finalizeProduct = async () => {
+    if (productId) return;
+    const q = productInput.trim();
+    if (q.length < 2) return;
+
+    // ostatnia próba po aktualnych opcjach
+    const local = findLocalId(q);
+    if (local) {
+      setProductId(local);
+      return;
+    }
+
+    // doładuj po samej nazwie
+    try {
+      const list = await getProductOptions(nameBeforeParen(q) || q, 20);
+      setProdOptions(list || []);
+      setProductId(findLocalId(q, list || []));
+    } catch (_e) {
+      /* ignore */
+    }
+  };
+
+  // --- EDYCJA WIERSZA ---
   const startEdit = (row) => {
     setEditId(row.id);
     setDraft({
@@ -78,20 +175,12 @@ export default function InventoryListPage() {
       condition: row.condition || 'new',
     });
   };
-
-  const cancelEdit = () => {
-    setEditId(null);
-    setDraft({});
-  };
-
+  const cancelEdit = () => { setEditId(null); setDraft({}); };
   const changeDraft = (k, v) => setDraft((d) => ({ ...d, [k]: v }));
 
   const saveEdit = async (id) => {
     try {
-      const payload = {
-        ...draft,
-        lastUpdatedBy: userId,
-      };
+      const payload = { ...draft, lastUpdatedBy: userId };
       const updated = await updateInventoryItem(id, payload);
       setItems((prev) => prev.map((it) => (it.id === id ? { ...it, ...updated } : it)));
       toast.success('Zapisano zmiany.');
@@ -99,33 +188,6 @@ export default function InventoryListPage() {
     } catch (e) {
       console.error(e);
       toast.error(e.message || 'Błąd aktualizacji pozycji');
-    }
-  };
-
-  /** szybkie przyjęcie / wydanie */
-  const quickOp = async (row, opType) => {
-    try {
-      const label = opType === 'in' ? 'przyjąć' : 'wydać';
-      const val = window.prompt(`Ile sztuk chcesz ${label}?`, '1');
-      if (!val) return;
-      const qty = parseInt(val, 10);
-      if (Number.isNaN(qty) || qty <= 0) {
-        toast.warn('Podaj dodatnią liczbę całkowitą.');
-        return;
-      }
-      await createInventoryOperation({
-        inventoryItemId: row.id,
-        operationType: opType,
-        quantity: qty,
-        userId,
-        notes: opType === 'in' ? 'Szybkie przyjęcie z listy' : 'Szybkie wydanie z listy',
-      });
-      // odśwież stan (backend przelicza ilość)
-      await load();
-      toast.success(opType === 'in' ? 'Przyjęto' : 'Wydano');
-    } catch (e) {
-      console.error(e);
-      toast.error(e.message || 'Błąd operacji');
     }
   };
 
@@ -145,9 +207,14 @@ export default function InventoryListPage() {
     }
   };
 
-  const applyFilters = () => load();
+  const applyFilters = async () => {
+    await finalizeProduct(); // dopnij ewentualny wybór z listy
+    load();
+  };
+
   const resetFilters = () => {
-    setQ('');
+    setProductInput('');
+    setProductId(null);
     setLoc('');
     setSupplier('');
     setOnlyLow(false);
@@ -162,11 +229,19 @@ export default function InventoryListPage() {
       {/* FILTRY */}
       <div style={{ display: 'flex', gap: 10, alignItems: 'center', margin: '10px 0 16px' }}>
         <input
+          list="product-filter-options"
           placeholder="Produkt (nazwa / SKU)"
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          style={{ minWidth: 220 }}
+          value={productInput}
+          onChange={(e) => { setProductInput(e.target.value); setProductId(findLocalId(e.target.value)); }}
+          onBlur={finalizeProduct}
+          style={{ minWidth: 240 }}
         />
+        <datalist id="product-filter-options">
+          {prodOptions.map((o) => (
+            <option key={o.id} value={o.label} />
+          ))}
+        </datalist>
+
         <input
           placeholder="Lokalizacja"
           value={loc}
@@ -212,13 +287,9 @@ export default function InventoryListPage() {
           </thead>
           <tbody>
             {loading ? (
-              <tr>
-                <td colSpan={8} style={{ padding: 16 }}>Ładowanie…</td>
-              </tr>
+              <tr><td colSpan={8} style={{ padding: 16 }}>Ładowanie…</td></tr>
             ) : visible.length === 0 ? (
-              <tr>
-                <td colSpan={8} style={{ padding: 16 }}>Brak pozycji</td>
-              </tr>
+              <tr><td colSpan={8} style={{ padding: 16 }}>Brak pozycji</td></tr>
             ) : (
               visible.map((row) => {
                 const available = (row.quantity || 0) - (row.reservedQuantity || 0);
@@ -306,13 +377,12 @@ export default function InventoryListPage() {
                         </>
                       ) : (
                         <>
-                          <button onClick={() => quickOp(row, 'in')} style={{ marginRight: 8 }}>
+                          <button onClick={() => openOp(row, 'in')} style={{ marginRight: 8 }}>
                             Przyjęcie
                           </button>
-                          <button onClick={() => quickOp(row, 'out')} style={{ marginRight: 8 }}>
+                          <button onClick={() => openOp(row, 'out')} style={{ marginRight: 8 }}>
                             Wydanie
                           </button>
-                          {/* Korekta usunięta – edycja robi to samo */}
                           <button onClick={() => startEdit(row)} style={{ marginRight: 8 }}>
                             Edytuj
                           </button>
@@ -332,9 +402,20 @@ export default function InventoryListPage() {
           </tbody>
         </table>
       </div>
+
+      {/* Modal operacji */}
+      <OperationModal
+        open={opModal.open}
+        type={opModal.type}
+        item={opModal.item}
+        onClose={closeOp}
+        onDone={load}
+      />
     </div>
   );
 }
+
+
 
 
 

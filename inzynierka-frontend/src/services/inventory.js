@@ -1,4 +1,3 @@
-// src/services/inventory.js
 import API from './api';
 
 /** Pobierz listę pozycji magazynowych (z filtrami) */
@@ -24,7 +23,6 @@ export async function createInventoryItem(payload) {
 
 /** Edycja pozycji (meta / ilość => rejestruje adjustment po stronie backendu) */
 export async function updateInventoryItem(id, payload) {
-  // Upewnij się, że liczby są liczbami
   const toSend = { ...payload };
   if (toSend.quantity !== undefined)  toSend.quantity = parseInt(toSend.quantity, 10);
   if (toSend.reservedQuantity !== undefined) toSend.reservedQuantity = parseInt(toSend.reservedQuantity, 10);
@@ -41,9 +39,8 @@ export async function deleteInventoryItem(id) {
   return true;
 }
 
-/** Utwórz operację magazynową (przyjęcie / wydanie / adjust) */
+/** Utwórz operację magazynową (przyjęcie / wydanie) */
 export async function createInventoryOperation(payload) {
-  // sanity coercion
   const body = { ...payload, quantity: parseInt(payload.quantity, 10) };
   const res = await API.post('/inventory/operations', body);
   if (!res.data?.success) throw new Error(res.data?.error || 'Błąd tworzenia operacji');
@@ -56,6 +53,7 @@ export async function listInventoryOperations(params = {}) {
   if (!res.data?.success) throw new Error(res.data?.error || 'Błąd pobierania operacji');
   return res.data.data; // { operations, pagination }
 }
+
 
 
 
