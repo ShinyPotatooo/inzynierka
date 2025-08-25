@@ -1,183 +1,187 @@
 // src/pages/ProductsListPage.jsx
-import React, { useEffect, useMemo, useState } from 'react';
-import { listProducts } from '../services/products';
-import { Link, useSearchParams } from 'react-router-dom';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import { toast } from 'react-toastify';
+import { listProducts } from '../services/products';
 
-const DEBOUNCE_MS = 350;
+const sorters = [
+  { value: 'idAsc', label: 'ID rosnąco' },
+  { value: 'idDesc', label: 'ID malejąco' },
+  { value: 'nameAsc', label: 'Nazwa A→Z' },
+  { value: 'nameDesc', label: 'Nazwa Z→A' },
+];
+
+function bySorter(v) {
+  if (v === 'idDesc') return (a, b) => b.id - a.id;
+  if (v === 'nameAsc') return (a, b) => (a.name || '').localeCompare(b.name || '');
+  if (v === 'nameDesc') return (a, b) => (b.name || '').localeCompare(a.name || '');
+  return (a, b) => a.id - b.id; // idAsc (domyślnie)
+}
 
 export default function ProductsListPage() {
-  const [params, setParams] = useSearchParams();
+  const navigate = useNavigate();
 
-  const [items, setItems] = useState([]);
-  const [totalItems, setTotalItems] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [rows, setRows] = useState([]);
+
+  const [q, setQ] = useState('');
+  const [sort, setSort] = useState('idAsc');
+
+  const [page, setPage] = useState(1);
+  const [limit] = useState(20);
   const [pages, setPages] = useState(1);
-  const [loading, setLoading] = useState(false);
+  const [total, setTotal] = useState(0);
 
-  const pageFromUrl = Number(params.get('page') || 1);
-  const searchFromUrl = params.get('q') || '';
-  const limitFromUrl = Number(params.get('limit') || 10);
+  const timer = useRef(null);
 
-  const [page, setPage] = useState(pageFromUrl);
-  const [search, setSearch] = useState(searchFromUrl);
-  const [limit, setLimit] = useState(limitFromUrl);
-
-  const debouncedSearch = useDebounce(search, DEBOUNCE_MS);
+  const load = async (_page = page, _q = q) => {
+    try {
+      setLoading(true);
+      const { products, pagination } = await listProducts({
+        page: _page,
+        limit,
+        search: _q || undefined,
+      });
+      setRows(products || []);
+      if (pagination) {
+        setPage(pagination.currentPage);
+        setPages(pagination.totalPages);
+        setTotal(pagination.totalItems);
+      }
+    } catch (e) {
+      console.error(e);
+      toast.error(e.message || 'Błąd ładowania produktów');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
-    (async () => {
-      try {
-        setLoading(true);
+    load(1, q);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-        const next = new URLSearchParams();
-        if (debouncedSearch) next.set('q', debouncedSearch);
-        if (page !== 1) next.set('page', String(page));
-        if (limit !== 10) next.set('limit', String(limit));
-        setParams(next, { replace: true });
+  // debounce wyszukiwarki
+  useEffect(() => {
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = setTimeout(() => load(1, q), 300);
+    return () => clearTimeout(timer.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [q]);
 
-        const { products, pagination } = await listProducts({
-          page,
-          limit,
-          search: debouncedSearch,
-        });
+  const visible = useMemo(() => {
+    const srt = bySorter(sort);
+    return [...rows].sort(srt);
+  }, [rows, sort]);
 
-        setItems(products || []);
-        setTotalItems(pagination?.totalItems ?? 0);
-        setPages(pagination?.totalPages || 1);
-      } catch (e) {
-        console.error(e);
-        toast.error('Nie udało się pobrać listy produktów');
-      } finally {
-        setLoading(false);
-      }
-    })();
-  }, [page, limit, debouncedSearch, setParams]);
-
-  const startIdx = useMemo(() => (page - 1) * limit + 1, [page, limit]);
-  const endIdx = useMemo(
-    () => Math.min(page * limit, totalItems),
-    [page, limit, totalItems]
-  );
+  const next = () => page < pages && load(page + 1, q);
+  const prev = () => page > 1 && load(page - 1, q);
 
   return (
     <div style={{ padding: '2rem' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
-        <h1 style={{ margin: 0, marginRight: 'auto' }}>Produkty</h1>
-        <Link
-          to="/products/new"
-          style={{
-            padding: '8px 12px',
-            background: '#0d6efd',
-            color: '#fff',
-            borderRadius: 6,
-            textDecoration: 'none'
-          }}
-        >
-          + Dodaj produkt
-        </Link>
-      </div>
+      <h1>Produkty</h1>
 
-      <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 12 }}>
+      <div style={{ display: 'flex', gap: 10, alignItems: 'center', margin: '10px 0 16px' }}>
         <input
-          placeholder="Szukaj po nazwie / SKU / opisie…"
-          value={search}
-          onChange={(e) => { setPage(1); setSearch(e.target.value); }}
-          style={{ minWidth: 360, padding: 8 }}
+          placeholder="Szukaj (nazwa / SKU / opis)"
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          style={{ minWidth: 260 }}
         />
-        <select value={limit} onChange={e => { setPage(1); setLimit(Number(e.target.value)); }}>
-          {[10, 20, 50].map(n => <option key={n} value={n}>{n} / stronę</option>)}
+        <select value={sort} onChange={(e) => setSort(e.target.value)}>
+          {sorters.map((s) => (
+            <option key={s.value} value={s.value}>
+              {`Sort: ${s.label}`}
+            </option>
+          ))}
         </select>
-        {loading && <span>Ładowanie…</span>}
+
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center' }}>
+          <span style={{ color: '#666', fontSize: 13 }}>
+            {loading ? 'Ładowanie…' : `Wyniki: ${total}`}
+          </span>
+          <button disabled={page <= 1} onClick={prev}>
+            ←
+          </button>
+          <span style={{ minWidth: 60, textAlign: 'center' }}>
+            {page} / {pages}
+          </span>
+          <button disabled={page >= pages} onClick={next}>
+            →
+          </button>
+          <button onClick={() => navigate('/products/new')} style={{ marginLeft: 8 }}>
+            + Dodaj produkt
+          </button>
+        </div>
       </div>
 
-      <div style={{ marginBottom: 8, color: '#666' }}>
-        {totalItems > 0
-          ? <>Wyświetlam {startIdx}–{endIdx} z {totalItems}</>
-          : <>Brak wyników</>}
-      </div>
-
-      <div style={{ overflowX: 'auto' }}>
+      <div style={{ border: '1px solid #eee', borderRadius: 8, overflow: 'hidden' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead>
-            <tr style={rowStyle.head}>
-              <th style={cellStyle.head}>SKU</th>
-              <th style={cellStyle.head}>Nazwa</th>
-              <th style={cellStyle.head}>Kategoria</th>
-              <th style={cellStyle.head}>Marka</th>
-              <th style={cellStyle.head}>Cena</th>
-              <th style={cellStyle.head}>Status</th>
-              <th style={cellStyle.head}>Stan całkowity</th>
-              <th style={cellStyle.head}>Dostępne</th>
+            <tr style={{ background: '#fafafa' }}>
+              <th style={{ textAlign: 'left', padding: 10 }}>ID</th>
+              <th style={{ textAlign: 'left', padding: 10 }}>SKU</th>
+              <th style={{ textAlign: 'left', padding: 10 }}>Nazwa</th>
+              <th style={{ textAlign: 'left', padding: 10 }}>Kategoria</th>
+              <th style={{ textAlign: 'left', padding: 10 }}>Marka</th>
+              <th style={{ textAlign: 'right', padding: 10 }}>Min</th>
+              <th style={{ textAlign: 'right', padding: 10 }}>Reorder</th>
+              <th style={{ textAlign: 'right', padding: 10 }}>Max</th>
+              <th style={{ textAlign: 'right', padding: 10 }}>Stan</th>
+              <th style={{ textAlign: 'left', padding: 10 }}>Status</th>
+              <th style={{ textAlign: 'left', padding: 10 }}>Akcje</th>
             </tr>
           </thead>
           <tbody>
-            {items.length === 0 && !loading && (
+            {loading ? (
               <tr>
-                <td colSpan={8} style={{ textAlign: 'center', padding: 16 }}>
-                  Nic nie znaleziono.
+                <td colSpan={11} style={{ padding: 16 }}>
+                  Ładowanie…
                 </td>
               </tr>
-            )}
-            {items.map(p => (
-              <tr key={p.id} style={rowStyle.body}>
-                <td style={cellStyle.body}>{p.sku}</td>
-                <td style={cellStyle.body}>{p.name}</td>
-                <td style={cellStyle.body}>{p.category || '—'}</td>
-                <td style={cellStyle.body}>{p.brand || '—'}</td>
-                <td style={cellStyle.body}>{formatPrice(p.price)}</td>
-                <td style={cellStyle.body}>{statusLabel(p.status)}</td>
-                <td style={cellStyle.body}>{p.totalStock ?? 0}</td>
-                <td style={cellStyle.body}>{p.totalAvailable ?? 0}</td>
+            ) : visible.length === 0 ? (
+              <tr>
+                <td colSpan={11} style={{ padding: 16 }}>
+                  Brak produktów
+                </td>
               </tr>
-            ))}
+            ) : (
+              visible.map((p) => (
+                <tr key={p.id} style={{ borderTop: '1px solid #eee' }}>
+                  <td style={{ padding: 10, width: 60 }}>{p.id}</td>
+                  <td style={{ padding: 10, width: 140 }}>{p.sku}</td>
+                  <td style={{ padding: 10 }}>
+                    <div style={{ fontWeight: 600 }}>{p.name}</div>
+                    <div style={{ color: '#777', fontSize: 12 }}>{p.description}</div>
+                  </td>
+                  <td style={{ padding: 10, width: 140 }}>{p.category || '—'}</td>
+                  <td style={{ padding: 10, width: 140 }}>{p.brand || '—'}</td>
+                  <td style={{ padding: 10, width: 80, textAlign: 'right' }}>
+                    {p.minStockLevel ?? '—'}
+                  </td>
+                  <td style={{ padding: 10, width: 90, textAlign: 'right' }}>
+                    {p.reorderPoint ?? '—'}
+                  </td>
+                  <td style={{ padding: 10, width: 80, textAlign: 'right' }}>
+                    {p.maxStockLevel ?? '—'}
+                  </td>
+                  <td style={{ padding: 10, width: 80, textAlign: 'right' }}>
+                    {p.totalStock ?? '—'}
+                  </td>
+                  <td style={{ padding: 10, width: 120 }}>
+                    <span style={{ textTransform: 'capitalize' }}>{p.status || 'active'}</span>
+                  </td>
+                  <td style={{ padding: 10, minWidth: 160 }}>
+                    <Link to={`/products/${p.id}`} style={{ marginRight: 8 }}>
+                      Edytuj
+                    </Link>
+                  </td>
+                </tr>
+              ))
+            )}
           </tbody>
         </table>
       </div>
-
-      {pages > 1 && (
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 12 }}>
-          <button onClick={() => setPage(1)} disabled={page === 1}>⏮</button>
-          <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1}>◀</button>
-          <span>Strona {page} / {pages}</span>
-          <button onClick={() => setPage(p => Math.min(pages, p + 1))} disabled={page === pages}>▶</button>
-          <button onClick={() => setPage(pages)} disabled={page === pages}>⏭</button>
-        </div>
-      )}
     </div>
   );
 }
-
-function useDebounce(value, delay) {
-  const [v, setV] = useState(value);
-  useEffect(() => {
-    const t = setTimeout(() => setV(value), delay);
-    return () => clearTimeout(t);
-  }, [value, delay]);
-  return v;
-}
-
-function statusLabel(s) {
-  switch (s) {
-    case 'active': return 'Aktywny';
-    case 'inactive': return 'Nieaktywny';
-    case 'discontinued': return 'Wycofany';
-    default: return s || '—';
-  }
-}
-
-function formatPrice(val) {
-  const n = Number(val);
-  if (Number.isFinite(n)) return `${n.toFixed(2)} zł`;
-  return '—';
-}
-
-const rowStyle = {
-  head: { background: '#f5f5f5' },
-  body: { borderBottom: '1px solid #eee' },
-};
-const cellStyle = {
-  head: { textAlign: 'left', padding: '10px 8px', fontWeight: 600 },
-  body: { padding: '8px' },
-};
-
-

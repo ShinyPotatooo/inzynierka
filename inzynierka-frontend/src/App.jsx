@@ -1,19 +1,30 @@
+// src/App.jsx
 import React from 'react';
-import { Routes, Route, useLocation } from 'react-router-dom';
+import { Routes, Route, useLocation, Navigate } from 'react-router-dom';
+
 import LoginPage from './pages/LoginPage';
-import InventoryListPage from './pages/InventoryListPage';       // ⬅️ nowy
-import InventoryItemFormPage from './pages/InventoryItemFormPage'; // ⬅️ nowy
-import InventoryItemDetailsPage from './pages/InventoryItemDetailsPage'; // ⬅️ nowy
+
+import InventoryListPage from './pages/InventoryListPage';
+import InventoryItemFormPage from './pages/InventoryItemFormPage';
+import InventoryItemDetailsPage from './pages/InventoryItemDetailsPage';
+
 import DashboardPage from './pages/DashboardPage';
 import AdminPanelPage from './pages/AdminPanelPage';
+
 import ProductsListPage from './pages/ProductsListPage';
 import ProductPage from './pages/ProductPage';
+
 import InventoryOperationsPage from './pages/InventoryOperationsPage';
+
 import Navbar from './components/Navbar';
+import PrivateRoute from './components/PrivateRoute';
+
 import { ToastContainer } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
 import { AuthProvider } from './context/AuthContext';
-import PrivateRoute from './components/PrivateRoute';
+
+// ⬇️ nowa strona (jeśli dodałeś plik)
+import NotificationsPage from './pages/NotificationsPage';
 
 function LayoutWrapper({ children }) {
   const location = useLocation();
@@ -31,8 +42,22 @@ export default function App() {
     <AuthProvider>
       <ToastContainer />
       <Routes>
+        {/* Login */}
         <Route path="/" element={<LoginPage />} />
 
+        {/* Dashboard */}
+        <Route
+          path="/dashboard"
+          element={
+            <PrivateRoute>
+              <LayoutWrapper>
+                <DashboardPage />
+              </LayoutWrapper>
+            </PrivateRoute>
+          }
+        />
+
+        {/* Magazyn */}
         <Route
           path="/inventory"
           element={
@@ -63,40 +88,6 @@ export default function App() {
             </PrivateRoute>
           }
         />
-
-        <Route
-          path="/dashboard"
-          element={
-            <PrivateRoute>
-              <LayoutWrapper>
-                <DashboardPage />
-              </LayoutWrapper>
-            </PrivateRoute>
-          }
-        />
-
-        <Route
-          path="/admin"
-          element={
-            <PrivateRoute requiredRole="admin">
-              <LayoutWrapper>
-                <AdminPanelPage />
-              </LayoutWrapper>
-            </PrivateRoute>
-          }
-        />
-
-        <Route
-          path="/products"
-          element={
-            <PrivateRoute>
-              <LayoutWrapper>
-                <ProductsListPage />
-              </LayoutWrapper>
-            </PrivateRoute>
-          }
-        />
-
         <Route
           path="/inventory/operations"
           element={
@@ -108,13 +99,68 @@ export default function App() {
           }
         />
 
+        {/* Produkty */}
+        <Route
+          path="/products"
+          element={
+            <PrivateRoute>
+              <LayoutWrapper>
+                <ProductsListPage />
+              </LayoutWrapper>
+            </PrivateRoute>
+          }
+        />
         <Route
           path="/products/new"
           element={
-            <PrivateRoute requiredRole="admin">
+            <PrivateRoute allowedRoles={['admin', 'manager']}>
               <LayoutWrapper>
                 <ProductPage />
               </LayoutWrapper>
+            </PrivateRoute>
+          }
+        />
+        <Route
+          path="/products/:id"
+          element={
+            <PrivateRoute allowedRoles={['admin', 'manager']}>
+              <LayoutWrapper>
+                <ProductPage />
+              </LayoutWrapper>
+            </PrivateRoute>
+          }
+        />
+
+        {/* Powiadomienia (FE-only) */}
+        <Route
+          path="/notifications"
+          element={
+            <PrivateRoute>
+              <LayoutWrapper>
+                <NotificationsPage />
+              </LayoutWrapper>
+            </PrivateRoute>
+          }
+        />
+
+        {/* Admin panel tylko dla admina */}
+        <Route
+          path="/admin"
+          element={
+            <PrivateRoute requiredRole="admin">
+              <LayoutWrapper>
+                <AdminPanelPage />
+              </LayoutWrapper>
+            </PrivateRoute>
+          }
+        />
+
+        {/* Fallback */}
+        <Route
+          path="*"
+          element={
+            <PrivateRoute>
+              <Navigate to="/inventory" replace />
             </PrivateRoute>
           }
         />
@@ -122,13 +168,3 @@ export default function App() {
     </AuthProvider>
   );
 }
-
-
-
-
-
-
-
-
-
-

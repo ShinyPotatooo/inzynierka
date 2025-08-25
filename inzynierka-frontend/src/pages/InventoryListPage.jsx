@@ -1,4 +1,3 @@
-// src/pages/InventoryListPage.jsx
 import React, { useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { toast } from 'react-toastify';
@@ -59,14 +58,15 @@ export default function InventoryListPage() {
   const load = async () => {
     try {
       setLoading(true);
-      const data = await fetchInventoryItems({
+      const { items: list = [] } = await fetchInventoryItems({
         productId: productId || undefined,
         location: loc || undefined,
         supplier: supplier || undefined,
         lowStock: onlyLow || undefined,
+        limit: 50,
       });
-      setItems(data || []);
-      if (onlyLow && (!data || data.length === 0)) {
+      setItems(Array.isArray(list) ? list : []);
+      if (onlyLow && (!list || list.length === 0)) {
         toast.info('Brak pozycji o niskim stanie.');
       }
     } catch (e) {
@@ -84,7 +84,7 @@ export default function InventoryListPage() {
 
   const visible = useMemo(() => {
     const srt = bySorter(sort);
-    return [...items].sort(srt);
+    return Array.isArray(items) ? [...items].sort(srt) : [];
   }, [items, sort]);
 
   // --- AUTOCOMPLETE PRODUKTU (debounce + lokalne dopasowanie) ---
@@ -121,7 +121,6 @@ export default function InventoryListPage() {
 
     timer.current = setTimeout(async () => {
       try {
-        // anulowanie poprzedniego zapytania (lokalnie)
         if (inflight.current) inflight.current.abort();
         inflight.current = new AbortController();
 
@@ -132,7 +131,6 @@ export default function InventoryListPage() {
         setProdOptions(list || []);
         setProductId(findLocalId(q, list || []));
       } catch (e) {
-        // jeśli przerwane — ignoruj
         setProdOptions([]);
       } finally {
         inflight.current = null;
@@ -148,14 +146,12 @@ export default function InventoryListPage() {
     const q = productInput.trim();
     if (q.length < 2) return;
 
-    // ostatnia próba po aktualnych opcjach
     const local = findLocalId(q);
     if (local) {
       setProductId(local);
       return;
     }
 
-    // doładuj po samej nazwie
     try {
       const list = await getProductOptions(nameBeforeParen(q) || q, 20);
       setProdOptions(list || []);
@@ -208,7 +204,7 @@ export default function InventoryListPage() {
   };
 
   const applyFilters = async () => {
-    await finalizeProduct(); // dopnij ewentualny wybór z listy
+    await finalizeProduct();
     load();
   };
 
@@ -414,6 +410,7 @@ export default function InventoryListPage() {
     </div>
   );
 }
+
 
 
 

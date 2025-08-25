@@ -25,6 +25,57 @@ function extractUsername(label = '') {
   return m ? m[1].trim() : null;
 }
 
+// --- CSV helper (eksportuje BIEŻĄCĄ stronę)
+function opsToCsv(rows) {
+  const headers = [
+    'id',
+    'operationType',
+    'productId',
+    'productSku',
+    'productName',
+    'inventoryItemId',
+    'userId',
+    'userName',
+    'quantity',
+    'fromLocation',
+    'toLocation',
+    'referenceNumber',
+    'referenceType',
+    'notes',
+    'operationDate'
+  ];
+  const escape = (v) => {
+    if (v == null) return '';
+    const s = String(v);
+    if (s.includes('"') || s.includes(',') || s.includes('\n')) {
+      return `"${s.replace(/"/g, '""')}"`;
+    }
+    return s;
+  };
+  const lines = [headers.join(',')];
+  rows.forEach(op => {
+    const vals = [
+      op.id,
+      op.operationType,
+      op.product?.id ?? '',
+      op.product?.sku ?? '',
+      escape(op.product?.name ?? ''),
+      op.inventoryItem?.id ?? op.inventoryItemId ?? '',
+      op.user?.id ?? '',
+      escape(op.user?.username || `${op.user?.firstName || ''} ${op.user?.lastName || ''}`.trim()),
+      op.quantity ?? '',
+      op.fromLocation ?? '',
+      op.toLocation ?? '',
+      op.referenceNumber ?? '',
+      op.referenceType ?? '',
+      escape(op.notes ?? ''),
+      op.operationDate ? new Date(op.operationDate).toISOString() : ''
+    ];
+    lines.push(vals.join(','));
+  });
+  return lines.join('\n');
+}
+
 export default function InventoryOperationsPage() {
   const [params, setParams] = useSearchParams();
 
@@ -106,7 +157,6 @@ export default function InventoryOperationsPage() {
     const q = debouncedProd.trim();
     if (q.length < 2) {
       setProductOpts([]);
-      // nie czyścimy id — user mógł mieć już ustawione
       return;
     }
     (async () => {
@@ -115,7 +165,7 @@ export default function InventoryOperationsPage() {
         const list = await getProductOptions(search, 20);
         setProductOpts(list || []);
         const localId = findProductIdLocally(q);
-        setProductId(localId || productId); // nie nadpisuj istniejącego id byle czym
+        setProductId(prev => (localId != null ? localId : prev)); // stabilniej niż używanie starej referencji
       } catch (e) {
         console.error(e);
         setProductOpts([]);
@@ -136,7 +186,7 @@ export default function InventoryOperationsPage() {
         const list = await getUserOptions(q, 20);
         setUserOpts(list || []);
         const localId = findUserIdLocally(q);
-        setUserId(localId || userId);
+        setUserId(prev => (localId != null ? localId : prev));
       } catch (e) {
         console.error(e);
         setUserOpts([]);
@@ -223,6 +273,30 @@ export default function InventoryOperationsPage() {
     setEndDate('');
   };
 
+  // --- Eksport CSV (bieżąca strona)
+  const downloadCsv = () => {
+    try {
+      if (!ops || ops.length === 0) {
+        toast.info('Brak wierszy do eksportu');
+        return;
+      }
+      const csv = opsToCsv(ops);
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      const stamp = new Date().toISOString().slice(0, 10);
+      a.download = `operations_${stamp}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      console.error(e);
+      toast.error('Nie udało się przygotować CSV');
+    }
+  };
+
   return (
     <div style={{ padding: '2rem' }}>
       <h1>Operacje magazynowe</h1>
@@ -284,9 +358,13 @@ export default function InventoryOperationsPage() {
         <button onClick={resetFilters}>Reset filtrów</button>
       </div>
 
-      <div style={{ marginBottom: 8, color: '#666' }}>
-        {total > 0 ? <>Wyświetlam {startIdx}–{endIdx} z {total}</> : <>Brak wyników</>}
-        {loading && <span style={{ marginLeft: 8 }}>Ładowanie…</span>}
+      {/* Pasek akcji */}
+      <div style={{ marginBottom: 8, display: 'flex', alignItems: 'center', gap: 12 }}>
+        <div style={{ color: '#666' }}>
+          {total > 0 ? <>Wyświetlam {startIdx}–{endIdx} z {total}</> : <>Brak wyników</>}
+          {loading && <span style={{ marginLeft: 8 }}>Ładowanie…</span>}
+        </div>
+        <button onClick={downloadCsv} style={{ marginLeft: 'auto' }}>Eksport CSV (ta strona)</button>
       </div>
 
       {/* Tabela */}
@@ -374,4 +452,5 @@ const cellStyle = {
   head: { textAlign: 'left', padding: '10px 8px', fontWeight: 600 },
   body: { padding: '8px' },
 };
+
 

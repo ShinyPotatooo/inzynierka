@@ -21,7 +21,7 @@ app.use(
   cors({
     origin: 'http://localhost:3000',
     credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
   })
 );
@@ -30,7 +30,6 @@ app.options('*', cors());
 // Security & body parsers
 app.use(
   helmet({
-    // dev-friendly; jak chcesz pełny CSP — dołóż osobno
     crossOriginResourcePolicy: { policy: 'cross-origin' },
   })
 );
@@ -42,41 +41,52 @@ app.use(morgan(isDev ? 'dev' : 'combined'));
 
 /* ---------------------------
    Rate limitery
-   - osobny dla /products/options (autosugestia)
-   - ogólny dla reszty /api
 ---------------------------- */
 const optionsLimiter = rateLimit({
-  windowMs: 15 * 1000, // 15s okno
-  max: isDev ? 500 : 120, // sporo zapytań w dev; w prod 120/15s
-  standardHeaders: true,  // RateLimit-*, Retry-After
+  windowMs: 15 * 1000,
+  max: isDev ? 500 : 120,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+const notificationsPollLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: isDev ? 1200 : 240,
+  standardHeaders: true,
   legacyHeaders: false,
 });
 
 const apiLimiter = rateLimit({
-  windowMs: 60 * 1000,                       // 60s
-  max: isDev ? 1000 : 300,                   // luźniej w dev
+  windowMs: 60 * 1000,
+  max: isDev ? 1000 : 300,
   standardHeaders: true,
   legacyHeaders: false,
-  // nie limituj ścieżki autosugestii tutaj (ma swój limiter powyżej)
-  skip: (req) => req.path.startsWith('/products/options'),
+  skip: (req) =>
+    req.path.startsWith('/products/options') ||
+    req.path.startsWith('/notifications/unread/count'),
 });
 
-// Uwaga: ważna kolejność – najpierw konkretny limiter, potem ogólny
+// Ważna kolejność – najpierw konkretne limitery, potem ogólny
 app.use('/api/products/options', optionsLimiter);
+app.use('/api/notifications/unread/count', notificationsPollLimiter);
 app.use('/api', apiLimiter);
 
-// Routes
+/* ---------------------------
+   Routes
+---------------------------- */
 const authRoutes = require('./routes/auth');
 const usersRoutes = require('./routes/users');
 const inventoryRoutes = require('./routes/inventory');
 const productRoutes = require('./routes/products');
+const notificationsRoutes = require('./routes/notifications'); // ⬅️
 
 app.use('/api/auth', authRoutes);
 app.use('/api/users', usersRoutes);
 app.use('/api/inventory', inventoryRoutes);
 app.use('/api/products', productRoutes);
+app.use('/api/notifications', notificationsRoutes); // ⬅️
 
-// Health / base
+// Health
 app.get('/api', (_req, res) => {
   res.json({ success: true, message: 'API działa' });
 });
@@ -86,8 +96,7 @@ app.use((req, res) => {
   res.status(404).json({ success: false, error: 'Nie znaleziono trasy' });
 });
 
-// Globalny handler błędów – spójne JSON-y
-// (jeśli gdzieś zrobisz next(err), to tu trafi)
+// Globalny handler błędów
 app.use((err, _req, res, _next) => {
   console.error('🔥 Global error:', err);
   const status = err.status || 500;
@@ -98,18 +107,19 @@ app.use((err, _req, res, _next) => {
       ? 'Za dużo zapytań — spróbuj ponownie za chwilę.'
       : 'Internal server error');
 
-  res
-    .status(status)
-    .json({ success: false, error: msg });
+  res.status(status).json({ success: false, error: msg });
 });
 
-// Start
 async function start() {
   try {
+    // 1) tylko handshake z DB — BEZ sync({ alter:true })
     await sequelize.authenticate();
     console.log('✅ Połączono z DB');
 
-    await sequelize.sync({ alter: true });
+    // Jeśli naprawdę potrzebujesz sync, rób zwykły, kontrolowany flagą:
+    // if (process.env.DB_SYNC === 'true') {
+    //   await sequelize.sync(); // bez alter
+    // }
 
     app.listen(PORT, () => {
       console.log(`🚀 Backend: http://localhost:${PORT}`);
@@ -121,3 +131,7 @@ async function start() {
 }
 
 start();
+
+
+
+

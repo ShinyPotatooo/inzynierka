@@ -5,6 +5,8 @@ const API = axios.create({
   baseURL: process.env.REACT_APP_API_URL || 'http://localhost:3001/api',
   withCredentials: true,
   timeout: 10000,
+  // ❗️Akceptuj 304 (warunkowe odpowiedzi) jako OK
+  validateStatus: (s) => (s >= 200 && s < 300) || s === 304,
 });
 
 // prosty helper do opóźnienia
@@ -25,12 +27,10 @@ API.interceptors.response.use(
     const cfg = error.config || {};
     const status = error.response?.status;
 
-    // Jeśli poprzednie zapytanie anulowane (np. autosugestia) — nie traktuj jako „prawdziwy” błąd
     if (axios.isCancel?.(error) || error.code === 'ERR_CANCELED') {
       return Promise.reject(error);
     }
 
-    // 429/503 — spróbuj ponownie (max 2 razy) z prostym backoffem
     if ((status === 429 || status === 503) && (cfg.__retried || 0) < 2) {
       cfg.__retried = (cfg.__retried || 0) + 1;
       const retryAfter = Number(error.response?.headers?.['retry-after']);
@@ -41,7 +41,6 @@ API.interceptors.response.use(
       return API(cfg);
     }
 
-    // Uporządkuj komunikat
     const message =
       error.response?.data?.error ||
       (status === 429
@@ -50,7 +49,6 @@ API.interceptors.response.use(
         ? 'Sesja wygasła — zaloguj się ponownie.'
         : 'Błąd sieci lub serwera');
 
-    // LOG diagnostyczny (pomaga zweryfikować „249/429”)
     // eslint-disable-next-line no-console
     console.warn(
       '[API error]',
@@ -63,7 +61,6 @@ API.interceptors.response.use(
 
     error.message = message;
 
-    // jeżeli nie było odpowiedzi serwera — dołóż pseudo-response z opisem
     if (!error.response) {
       error.response = { data: { error: message } };
     }
@@ -73,3 +70,4 @@ API.interceptors.response.use(
 );
 
 export default API;
+

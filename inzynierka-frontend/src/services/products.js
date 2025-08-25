@@ -13,6 +13,18 @@ export async function createProduct(payload) {
   return res.data.data.product;
 }
 
+export async function updateProduct(id, payload) {
+  const res = await API.put(`/products/${id}`, payload);
+  if (!res.data?.success) throw new Error(res.data?.error || 'Błąd aktualizacji produktu');
+  return res.data.data.product;
+}
+
+export async function deleteProduct(id) {
+  const res = await API.delete(`/products/${id}`);
+  if (!res.data?.success) throw new Error(res.data?.error || 'Błąd usuwania produktu');
+  return true;
+}
+
 /**
  * Podpowiedzi produktów (nazwa/SKU).
  * Możesz podać { signal } jeśli chcesz anulować request lokalnie w komponencie.
@@ -22,7 +34,7 @@ export async function getProductOptions(query = '', limit = 20, opts = {}) {
   if (q.length < 2) return [];
   const res = await API.get('/products/options', {
     params: { query: q, limit },
-    signal: opts.signal, // opcjonalny AbortController.signal
+    signal: opts.signal,
   });
   if (!res.data?.success) throw new Error(res.data?.error || 'Błąd pobierania opcji produktów');
   return res.data.data.options; // [{ id, label }]
@@ -33,3 +45,4 @@ export async function getProductById(id) {
   if (!res.data?.success) throw new Error(res.data?.error || 'Błąd pobierania produktu');
   return res.data.data.product;
 }
+
