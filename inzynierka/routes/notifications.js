@@ -1,208 +1,236 @@
 // routes/notifications.js
 const express = require('express');
 const router = express.Router();
-const { Op } = require('sequelize');
-const { Notification, Product, User } = require('../models');
+const { sequelize, Notification, Product, User, NotificationState } = require('../models');
 
-// GET /api/notifications - lista (z filtrami/paginacją)
+// widoczność po roli (z aliasem)
+const roleFilterSql = (alias = 'n') =>
+  `(${alias}."targetRole" IS NULL OR ${alias}."targetRole" = 'all' OR ${alias}."targetRole" = :role)`;
+
+// NO-CACHE helper
+const noCache = (res) => {
+  res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.set('Pragma', 'no-cache');
+  res.set('Expires', '0');
+};
+
+/** 🔔 Licznik nieprzeczytanych dla usera */
+router.get('/unread/count', async (req, res) => {
+  try {
+    const userId = Number(req.query.userId);
+    const role = String(req.query.role || 'all');
+    noCache(res);
+
+    const [[row]] = await sequelize.query(
+      `
+      SELECT COUNT(*)::int AS count
+      FROM notifications n
+      WHERE
+        ${roleFilterSql('n')}
+        AND NOT EXISTS (
+          SELECT 1 FROM notification_states s
+          WHERE s."notificationId" = n."id"
+            AND s."userId" = :userId
+            AND s."isRead" = TRUE
+        )
+      `,
+      { replacements: { userId, role } }
+    );
+
+    res.json({ success: true, data: { count: row.count } });
+  } catch (err) {
+    console.error('Unread count error:', err);
+    res.status(500).json({ success: false, error: 'Internal server error' });
+  }
+});
+
+/** 📄 Lista z filtrami – per-user isRead */
 router.get('/', async (req, res) => {
   try {
-    const {
-      page = 1,
-      limit = 10,
-      type,
-      priority,
-      isRead,
-      targetRole,
-      startDate,
-      endDate
-    } = req.query;
+    const page = Math.max(1, Number(req.query.page || 1));
+    const limit = Math.max(1, Math.min(200, Number(req.query.limit || 20)));
+    const offset = (page - 1) * limit;
 
-    const offset = (Number(page) - 1) * Number(limit);
-    const whereClause = {};
+    const role = String(req.query.role || 'all');
+    const userId = req.query.userId ? Number(req.query.userId) : null;
+    const isReadParam = typeof req.query.isRead === 'string' ? req.query.isRead : null; // 'true'|'false'|null
+    const type = req.query.type || null;
+    const priority = req.query.priority || null;
 
-    if (type) whereClause.type = type;
-    if (priority) whereClause.priority = priority;
-    if (typeof isRead !== 'undefined') whereClause.isRead = String(isRead) === 'true';
-    if (targetRole) whereClause.targetRole = targetRole;
+    noCache(res);
 
-    if (startDate || endDate) {
-      whereClause.createdAt = {};
-      if (startDate) whereClause.createdAt[Op.gte] = new Date(startDate);
-      if (endDate)   whereClause.createdAt[Op.lte] = new Date(endDate);
+    const whereParts = [roleFilterSql('n')];
+    const repl = { role };
+
+    if (type) { whereParts.push(`n."type" = :type`); repl.type = type; }
+    if (priority) { whereParts.push(`n."priority" = :priority`); repl.priority = priority; }
+
+    if (userId) {
+      if (isReadParam === 'true') {
+        whereParts.push(`
+          EXISTS (
+            SELECT 1 FROM notification_states s
+            WHERE s."notificationId" = n."id"
+              AND s."userId" = :userId
+              AND s."isRead" = TRUE
+          )
+        `);
+        repl.userId = userId;
+      } else if (isReadParam === 'false') {
+        whereParts.push(`
+          NOT EXISTS (
+            SELECT 1 FROM notification_states s
+            WHERE s."notificationId" = n."id"
+              AND s."userId" = :userId
+              AND s."isRead" = TRUE
+          )
+        `);
+        repl.userId = userId;
+      }
     }
 
-    const notifications = await Notification.findAndCountAll({
-      where: whereClause,
-      limit: Number(limit),
-      offset,
-      order: [['createdAt', 'DESC']],
-      include: [
-        { model: Product, as: 'product', attributes: ['id', 'sku', 'name'] },
-        { model: User, as: 'user', attributes: ['id', 'username', 'firstName', 'lastName'] },
-      ],
+    const whereSql = whereParts.length ? `WHERE ${whereParts.join(' AND ')}` : '';
+
+    // count
+    const [[countRow]] = await sequelize.query(
+      `SELECT COUNT(*)::int AS count FROM notifications n ${whereSql};`,
+      { replacements: repl }
+    );
+    const totalItems = countRow.count;
+
+    // id w danej stronie
+    const [idRows] = await sequelize.query(
+      `
+      SELECT n.id
+      FROM notifications n
+      ${whereSql}
+      ORDER BY n."createdAt" DESC
+      LIMIT :limit OFFSET :offset
+      `,
+      { replacements: { ...repl, limit, offset } }
+    );
+    const ids = idRows.map(r => r.id);
+
+    let notifications = [];
+    if (ids.length) {
+      notifications = await Notification.findAll({
+        where: { id: ids },
+        include: [
+          { model: Product, as: 'product', attributes: ['id', 'sku', 'name'] },
+          { model: User, as: 'user', attributes: ['id', 'username', 'firstName', 'lastName'] },
+          ...(userId ? [{
+            model: NotificationState,
+            as: 'states',
+            where: { userId, isRead: true },
+            required: false,
+            attributes: ['id', 'userId', 'isRead', 'readAt'],
+          }] : []),
+        ],
+        order: [['createdAt', 'DESC']],
+      });
+    }
+
+    // plain + isReadForUser
+    const rows = notifications.map((n) => {
+      const j = n.toJSON();
+      const isReadForUser = Array.isArray(j.states) && j.states.length > 0;
+      delete j.states;
+      j.isReadForUser = isReadForUser;
+      return j;
     });
 
     res.json({
       success: true,
       data: {
-        notifications: notifications.rows,
+        notifications: rows,
         pagination: {
-          currentPage: Number(page),
-          totalPages: Math.ceil(notifications.count / Number(limit)),
-          totalItems: notifications.count,
-          itemsPerPage: Number(limit),
+          currentPage: page,
+          totalPages: Math.ceil(totalItems / limit),
+          totalItems,
+          itemsPerPage: limit,
         },
       },
     });
-  } catch (error) {
-    console.error('Get notifications error:', error);
+  } catch (err) {
+    console.error('Get notifications error:', err);
     res.status(500).json({ success: false, error: 'Internal server error' });
   }
 });
 
-// GET /api/notifications/unread/count - licznik nieprzeczytanych (no-cache)
-router.get('/unread/count', async (req, res) => {
-  try {
-    const { targetRole } = req.query;
-
-    // ✨ anty-cache – żadnych 304 po drodze
-    res.set({
-      'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
-      'Pragma': 'no-cache',
-      'Expires': '0',
-      'Surrogate-Control': 'no-store',
-    });
-
-    const whereClause = { isRead: false };
-    if (targetRole) whereClause.targetRole = targetRole;
-
-    const count = await Notification.count({ where: whereClause });
-    res.json({ success: true, data: { unreadCount: count } });
-  } catch (error) {
-    console.error('Get unread count error:', error);
-    res.status(500).json({ success: false, error: 'Internal server error' });
-  }
-});
-
-// GET /api/notifications/:id
-router.get('/:id', async (req, res) => {
-  try {
-    const notification = await Notification.findByPk(req.params.id, {
-      include: [
-        { model: Product, as: 'product' },
-        { model: User, as: 'user', attributes: ['id', 'username', 'firstName', 'lastName'] },
-      ],
-    });
-    if (!notification) return res.status(404).json({ success: false, error: 'Notification not found' });
-    res.json({ success: true, data: { notification } });
-  } catch (error) {
-    console.error('Get notification error:', error);
-    res.status(500).json({ success: false, error: 'Internal server error' });
-  }
-});
-
-// POST /api/notifications
-router.post('/', async (req, res) => {
-  try {
-    const {
-      type, title, message,
-      productId, userId,
-      targetRole = 'all',
-      priority = 'medium',
-      scheduledAt,
-      metadata
-    } = req.body;
-
-    if (!type || !title || !message) {
-      return res.status(400).json({ success: false, error: 'Type, title, and message are required' });
-    }
-
-    if (productId) {
-      const product = await Product.findByPk(productId);
-      if (!product) return res.status(400).json({ success: false, error: 'Product not found' });
-    }
-    if (userId) {
-      const user = await User.findByPk(userId);
-      if (!user) return res.status(400).json({ success: false, error: 'User not found' });
-    }
-
-    const notification = await Notification.create({
-      type, title, message, productId, userId, targetRole, priority,
-      scheduledAt: scheduledAt ? new Date(scheduledAt) : null,
-      metadata: metadata ? JSON.parse(metadata) : null,
-      isRead: false,
-      isSent: false,
-    });
-
-    res.status(201).json({ success: true, data: { notification, message: 'Notification created successfully' } });
-  } catch (error) {
-    console.error('Create notification error:', error);
-    res.status(500).json({ success: false, error: 'Internal server error' });
-  }
-});
-
-// PUT /api/notifications/:id
-router.put('/:id', async (req, res) => {
-  try {
-    const notification = await Notification.findByPk(req.params.id);
-    if (!notification) return res.status(404).json({ success: false, error: 'Notification not found' });
-
-    const updateData = { ...req.body };
-    if (updateData.scheduledAt) updateData.scheduledAt = new Date(updateData.scheduledAt);
-    if (updateData.metadata)    updateData.metadata    = JSON.parse(updateData.metadata);
-
-    await notification.update(updateData);
-    res.json({ success: true, data: { notification, message: 'Notification updated successfully' } });
-  } catch (error) {
-    console.error('Update notification error:', error);
-    res.status(500).json({ success: false, error: 'Internal server error' });
-  }
-});
-
-// PATCH /api/notifications/:id/read
+/** ✅ Oznacz jedno jako przeczytane (per-user) */
 router.patch('/:id/read', async (req, res) => {
   try {
-    const notification = await Notification.findByPk(req.params.id);
-    if (!notification) return res.status(404).json({ success: false, error: 'Notification not found' });
+    const id = Number(req.params.id);
+    const userId = Number(req.body.userId || req.query.userId);
+    if (!userId) return res.status(400).json({ success: false, error: 'userId required' });
 
-    await notification.update({ isRead: true, readAt: new Date() });
-    res.json({ success: true, data: { notification, message: 'Notification marked as read' } });
-  } catch (error) {
-    console.error('Mark notification read error:', error);
+    await NotificationState.upsert({
+      notificationId: id,
+      userId,
+      isRead: true,
+      readAt: new Date(),
+    });
+
+    res.json({ success: true, data: { id, userId, isReadForUser: true} });
+  } catch (err) {
+    console.error('Mark read error:', err);
     res.status(500).json({ success: false, error: 'Internal server error' });
   }
 });
 
-// PATCH /api/notifications/read-all
-router.patch('/read-all', async (req, res) => {
+/** ↩️ Oznacz jedno jako nieprzeczytane (per-user) */
+router.patch('/:id/unread', async (req, res) => {
   try {
-    const { targetRole } = req.query;
-    const whereClause = { isRead: false };
-    if (targetRole) whereClause.targetRole = targetRole;
+    const id = Number(req.params.id);
+    const userId = Number(req.body.userId || req.query.userId);
+    if (!userId) return res.status(400).json({ success: false, error: 'userId required' });
 
-    const [affected] = await Notification.update(
-      { isRead: true, readAt: new Date() },
-      { where: whereClause }
+    await NotificationState.destroy({ where: { notificationId: id, userId } });
+    res.json({ success: true, data: { id, userId, isReadForUser: false } });
+  } catch (err) {
+    console.error('Mark unread error:', err);
+    res.status(500).json({ success: false, error: 'Internal server error' });
+  }
+});
+
+/** 🧹 Oznacz wszystkie jako przeczytane (per-user) */
+router.post('/mark-all-read', async (req, res) => {
+  try {
+    const userId = Number(req.body.userId || req.query.userId);
+    const role = String(req.body.role || req.query.role || 'all');
+    if (!userId) return res.status(400).json({ success: false, error: 'userId required' });
+
+    const [rows] = await sequelize.query(
+      `
+      SELECT n.id
+      FROM notifications n
+      WHERE
+        ${roleFilterSql('n')}
+        AND NOT EXISTS (
+          SELECT 1 FROM notification_states s
+          WHERE s."notificationId" = n."id"
+            AND s."userId" = :userId
+            AND s."isRead" = TRUE
+        )
+      `,
+      { replacements: { userId, role } }
     );
 
-    res.json({ success: true, data: { message: `${affected} notifications marked as read` } });
-  } catch (error) {
-    console.error('Mark all notifications read error:', error);
-    res.status(500).json({ success: false, error: 'Internal server error' });
-  }
-});
+    if (rows.length) {
+      const payload = rows.map(r => ({
+        notificationId: r.id,
+        userId,
+        isRead: true,
+        readAt: new Date(),
+      }));
+      await NotificationState.bulkCreate(payload, {
+        updateOnDuplicate: ['isRead', 'readAt'],
+      });
+    }
 
-// DELETE /api/notifications/:id
-router.delete('/:id', async (req, res) => {
-  try {
-    const notification = await Notification.findByPk(req.params.id);
-    if (!notification) return res.status(404).json({ success: false, error: 'Notification not found' });
-
-    await notification.destroy();
-    res.json({ success: true, data: { message: 'Notification deleted successfully' } });
-  } catch (error) {
-    console.error('Delete notification error:', error);
+    res.json({ success: true, data: { marked: rows.length } });
+  } catch (err) {
+    console.error('Mark all read error:', err);
     res.status(500).json({ success: false, error: 'Internal server error' });
   }
 });

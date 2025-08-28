@@ -5,31 +5,55 @@ import { AuthContext } from '../context/AuthContext';
 import { getUnreadCount } from '../services/notifications';
 
 export default function Navbar() {
-  const { user } = useContext(AuthContext);
+  const { user, logout } = useContext(AuthContext) || {};
   const navigate = useNavigate();
   const [unread, setUnread] = useState(0);
   const timer = useRef(null);
+  const inFlight = useRef(null);
 
   async function refreshUnread() {
     try {
-      const count = await getUnreadCount(user?.role); // ⬅️ przekaż rolę
-      setUnread(count);
-    } catch {
-      // cicho — licznik nie powinien crashować navbaru
+      if (!user?.id) { setUnread(0); return; }
+      // cancel poprzedniego fetch’a (bezpiecznie)
+      if (inFlight.current?.abort) inFlight.current.abort();
+      const ctrl = new AbortController();
+      inFlight.current = ctrl;
+
+      const count = await getUnreadCount({
+        userId: user.id,
+        role: user.role || 'all',
+        signal: ctrl.signal, // ignorowane przez nasz wrapper, ale zachowujemy wzorzec
+      });
+      setUnread((prev) => (prev !== count ? count : prev));
+    } catch (e) {
+      // pokaż w dev konsoli jeśli coś nie pykło, ale nie spamuj UI
+      if (process.env.NODE_ENV !== 'production') {
+        // eslint-disable-next-line no-console
+        console.debug('🔔 unread refresh failed:', e?.message || e);
+      }
     }
   }
 
   useEffect(() => {
+    // start od razu
     refreshUnread();
+
+    // cyklicznie (30s jak u Ciebie)
     timer.current = setInterval(refreshUnread, 30000);
+
+    // focus okna i nasz wewnętrzny broadcast z listy
     const onFocus = () => refreshUnread();
+    const onBcast = () => refreshUnread();
     window.addEventListener('focus', onFocus);
+    window.addEventListener('notifications:update', onBcast);
+
     return () => {
-      clearInterval(timer.current);
+      if (timer.current) clearInterval(timer.current);
       window.removeEventListener('focus', onFocus);
+      window.removeEventListener('notifications:update', onBcast);
+      if (inFlight.current?.abort) inFlight.current.abort();
     };
-    // zależność od roli – jeśli się zmieni (login/zmiana roli), przelicz
-  }, [user?.role]);
+  }, [user?.id, user?.role]);
 
   const linkStyle = ({ isActive }) => ({
     color: isActive ? '#fff' : '#e5e7eb',
@@ -39,9 +63,21 @@ export default function Navbar() {
     background: isActive ? 'rgba(255,255,255,.12)' : 'transparent'
   });
 
+  function handleLogout() {
+    // preferuj metodę z kontekstu
+    if (typeof logout === 'function') {
+      logout();
+    } else {
+      // fallback: wyczyść lokalne dane i skocz do logowania
+      try { localStorage.removeItem('token'); } catch {}
+      navigate('/login', { replace: true });
+    }
+  }
+
   return (
     <div style={{ display: 'flex', gap: 12, alignItems: 'center', padding: '10px 14px', background: '#282c34', color: '#fff' }}>
-      <div style={{ fontWeight: 800 }}>WMS</div>
+      <div style={{ fontWeight: 800, letterSpacing: .5 }}>WMS</div>
+
       <NavLink to="/inventory" style={linkStyle}>Magazyn</NavLink>
       <NavLink to="/inventory/operations" style={linkStyle}>Operacje</NavLink>
       <NavLink to="/products" style={linkStyle}>Produkty</NavLink>
@@ -64,11 +100,17 @@ export default function Navbar() {
         )}
       </div>
 
-      <div style={{ marginLeft: 12, opacity: .9, fontSize: 13 }}>
-        {user ? `${user.firstName || ''} ${user.lastName || ''} (${user.role})` : '—'}
+      <div style={{ marginLeft: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
+        <span style={{ opacity: .9, fontSize: 13 }}>
+          {user ? `${user.firstName || ''} ${user.lastName || ''} (${user.role})` : '—'}
+        </span>
+        <button onClick={handleLogout} style={{
+          background: '#374151', color: '#fff', border: 'none', borderRadius: 6,
+          padding: '6px 10px', cursor: 'pointer'
+        }}>
+          Wyloguj
+        </button>
       </div>
     </div>
   );
 }
-
-

@@ -1,48 +1,57 @@
-// src/services/notifications.js
+// inzynierka-frontend/src/services/notifications.js
 import API from './api';
 
-export async function listNotifications(params = {}) {
-  const res = await API.get('/notifications', {
-    params: {
-      page: params.page ?? 1,
-      limit: params.limit ?? 20,
-      type: params.type || undefined,
-      priority: params.priority || undefined,
-      isRead: params.isRead ?? undefined,
-      targetRole: params.targetRole || undefined,
-      startDate: params.startDate || undefined,
-      endDate: params.endDate || undefined,
-    },
-  });
-  if (!res.data?.success) throw new Error(res.data?.error || 'Błąd pobierania powiadomień');
-  const { notifications, pagination } = res.data.data || {};
-  return {
-    notifications: notifications || [],
-    pagination:
-      pagination || { currentPage: 1, totalPages: 1, totalItems: 0, itemsPerPage: params.limit ?? 20 },
-  };
+const BASE = '/notifications';
+
+export async function listNotifications({
+  page = 1,
+  limit = 20,
+  type,
+  priority,
+  isRead,
+  role = 'all',
+  userId,
+}) {
+  const params = { page, limit, role, userId };
+  if (type) params.type = type;
+  if (priority) params.priority = priority;
+  if (typeof isRead === 'boolean') params.isRead = isRead;
+
+  const { data } = await API.get(BASE, { params });
+  const notifications = (data?.data?.notifications ?? []).map(n => ({
+    ...n,
+    isReadForUser: n.isReadForUser ?? Boolean(n.isRead),
+  }));
+  return { notifications, pagination: data?.data?.pagination };
 }
 
-export async function markNotificationRead(id) {
-  const res = await API.patch(`/notifications/${id}/read`);
-  if (!res.data?.success) throw new Error(res.data?.error || 'Błąd oznaczenia jako przeczytane');
-  return res.data.data.notification;
+export async function getUnreadCount({ userId, role = 'all' }) {
+  const { data } = await API.get(`${BASE}/unread/count`, { params: { userId, role } });
+  return data?.data?.count ?? 0;
 }
 
-export async function markAllRead(targetRole) {
-  const res = await API.patch('/notifications/read-all', {}, { params: { targetRole } });
-  if (!res.data?.success) throw new Error(res.data?.error || 'Błąd masowego oznaczenia jako przeczytane');
-  return true;
+export async function markNotificationRead(id, userId) {
+  const { data } = await API.patch(`${BASE}/${id}/read`, { userId });
+  return data.data;
 }
 
-export async function deleteNotification(id) {
-  const res = await API.delete(`/notifications/${id}`);
-  if (!res.data?.success) throw new Error(res.data?.error || 'Błąd usuwania powiadomienia');
-  return true;
+export async function markNotificationUnread(id, userId) {
+  const { data } = await API.patch(`${BASE}/${id}/unread`, { userId });
+  return data.data;
 }
 
-export async function getUnreadCount(targetRole) {
-  const res = await API.get('/notifications/unread/count', { params: { targetRole } });
-  if (!res.data?.success) throw new Error(res.data?.error || 'Błąd pobierania licznika');
-  return res.data?.data?.unreadCount ?? 0;
+export async function dismissNotification(id, userId) {
+  const { data } = await API.post(`${BASE}/${id}/dismiss`, { userId });
+  return data.data;
+}
+
+export async function deleteNotificationGlobal(id, role = 'worker') {
+  const { data } = await API.delete(`${BASE}/${id}`, { params: { role } });
+  return data.data;
+}
+export const deleteNotification = deleteNotificationGlobal;
+
+export async function markAllRead(userId, role = 'all') {
+  const { data } = await API.post(`${BASE}/mark-all-read`, { userId, role });
+  return data.data;
 }

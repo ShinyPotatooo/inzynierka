@@ -13,10 +13,9 @@ const PORT = process.env.PORT || 3001;
 const ENV = process.env.NODE_ENV || 'development';
 const isDev = ENV !== 'production';
 
-// jeśli kiedyś ruszy za proxy (np. nginx), poprawne IP do limiterów
 app.set('trust proxy', 1);
+if (isDev) app.set('etag', false); // unik 304 dla JSON w DEV
 
-// CORS
 app.use(
   cors({
     origin: 'http://localhost:3000',
@@ -27,7 +26,6 @@ app.use(
 );
 app.options('*', cors());
 
-// Security & body parsers
 app.use(
   helmet({
     crossOriginResourcePolicy: { policy: 'cross-origin' },
@@ -35,40 +33,36 @@ app.use(
 );
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-
-// Logger
 app.use(morgan(isDev ? 'dev' : 'combined'));
 
 /* ---------------------------
    Rate limitery
 ---------------------------- */
+const skipOptions = (req) => req.method === 'OPTIONS';
+
 const optionsLimiter = rateLimit({
   windowMs: 15 * 1000,
-  max: isDev ? 500 : 120,
+  max: ENV !== 'production' ? 500 : 120,
   standardHeaders: true,
   legacyHeaders: false,
+  skip: skipOptions,
 });
 
-const notificationsPollLimiter = rateLimit({
-  windowMs: 60 * 1000,
-  max: isDev ? 1200 : 240,
-  standardHeaders: true,
-  legacyHeaders: false,
-});
-
+// UWAGA: wyłączamy limity dla całej gałęzi /api/notifications/*
+// żeby nie generować 429 (często tekstowych) podczas odświeżania listy/licznika
 const apiLimiter = rateLimit({
   windowMs: 60 * 1000,
-  max: isDev ? 1000 : 300,
+  max: ENV !== 'production' ? 1000 : 300,
   standardHeaders: true,
   legacyHeaders: false,
   skip: (req) =>
+    skipOptions(req) ||
     req.path.startsWith('/products/options') ||
-    req.path.startsWith('/notifications/unread/count'),
+    req.path.startsWith('/notifications'), // <<< cała gałąź notifications poza limitem
 });
 
 // Ważna kolejność – najpierw konkretne limitery, potem ogólny
 app.use('/api/products/options', optionsLimiter);
-app.use('/api/notifications/unread/count', notificationsPollLimiter);
 app.use('/api', apiLimiter);
 
 /* ---------------------------
@@ -78,13 +72,13 @@ const authRoutes = require('./routes/auth');
 const usersRoutes = require('./routes/users');
 const inventoryRoutes = require('./routes/inventory');
 const productRoutes = require('./routes/products');
-const notificationsRoutes = require('./routes/notifications'); // ⬅️
+const notificationsRoutes = require('./routes/notifications');
 
 app.use('/api/auth', authRoutes);
 app.use('/api/users', usersRoutes);
 app.use('/api/inventory', inventoryRoutes);
 app.use('/api/products', productRoutes);
-app.use('/api/notifications', notificationsRoutes); // ⬅️
+app.use('/api/notifications', notificationsRoutes);
 
 // Health
 app.get('/api', (_req, res) => {
@@ -110,28 +104,67 @@ app.use((err, _req, res, _next) => {
   res.status(status).json({ success: false, error: msg });
 });
 
+let server = null;
+let shuttingDown = false;
+
 async function start() {
   try {
-    // 1) tylko handshake z DB — BEZ sync({ alter:true })
     await sequelize.authenticate();
     console.log('✅ Połączono z DB');
 
-    // Jeśli naprawdę potrzebujesz sync, rób zwykły, kontrolowany flagą:
-    // if (process.env.DB_SYNC === 'true') {
-    //   await sequelize.sync(); // bez alter
-    // }
-
-    app.listen(PORT, () => {
+    server = app.listen(PORT, () => {
       console.log(`🚀 Backend: http://localhost:${PORT}`);
+    });
+
+    server.on('error', (err) => {
+      if (err?.code === 'EADDRINUSE') {
+        console.error('⚠️  Port zajęty (EADDRINUSE). Poprzednia instancja jeszcze zamyka gniazdo...');
+      } else {
+        console.error('Server error:', err);
+      }
     });
   } catch (err) {
     console.error('❌ Błąd uruchomienia serwera:', err);
-    process.exit(1);
   }
 }
 
+async function closeGracefully(reason = 'shutdown') {
+  if (shuttingDown) return;
+  shuttingDown = true;
+
+  console.log(`🛑 Zamykam serwer... (${reason})`);
+  try {
+    if (server) {
+      await new Promise((resolve) => server.close(resolve));
+      console.log('🔌 HTTP zamknięty.');
+    }
+  } catch (e) {
+    console.error('Błąd zamykania HTTP:', e);
+  }
+
+  try {
+    console.log('🔌 Zamykanie połączenia z DB...');
+    await sequelize.close();
+    console.log('✅ DB zamknięta.');
+  } catch (e) {
+    console.error('Błąd zamykania DB:', e);
+  }
+}
+
+['SIGINT', 'SIGTERM', 'SIGUSR2'].forEach((sig) => {
+  process.on(sig, async () => {
+    await closeGracefully(sig);
+    process.exit(0);
+  });
+});
+
+process.on('unhandledRejection', (err) => {
+  console.error('UnhandledRejection:', err);
+});
+process.on('uncaughtException', async (err) => {
+  console.error('UncaughtException:', err);
+  await closeGracefully('uncaughtException');
+  process.exit(1);
+});
+
 start();
-
-
-
-
