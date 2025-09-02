@@ -1,4 +1,3 @@
-// src/App.jsx
 import React from 'react';
 import { Routes, Route, useLocation, Navigate } from 'react-router-dom';
 
@@ -23,8 +22,8 @@ import { ToastContainer } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
 import { AuthProvider } from './context/AuthContext';
 
-// ⬇️ nowa strona (jeśli dodałeś plik)
-import NotificationsPage from './pages/NotificationsPage';
+import NotificationDetailsPage from './pages/NotificationDetailsPage';
+import NotificationsPage from './pages/NotificationsPage'; // ← bez .jsx (mniej kłopotów z TS/casing)
 
 function LayoutWrapper({ children }) {
   const location = useLocation();
@@ -131,7 +130,7 @@ export default function App() {
           }
         />
 
-        {/* Powiadomienia (FE-only) */}
+        {/* Powiadomienia */}
         <Route
           path="/notifications"
           element={
@@ -142,8 +141,18 @@ export default function App() {
             </PrivateRoute>
           }
         />
+        <Route
+          path="/notifications/:id"
+          element={
+            <PrivateRoute>
+              <LayoutWrapper>
+                <NotificationDetailsPage />
+              </LayoutWrapper>
+            </PrivateRoute>
+          }
+        />
 
-        {/* Admin panel tylko dla admina */}
+        {/* Admin panel */}
         <Route
           path="/admin"
           element={

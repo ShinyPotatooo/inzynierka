@@ -1,4 +1,3 @@
-// src/pages/NotificationsPage.jsx
 import React, { useContext, useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import {
@@ -81,6 +80,7 @@ export default function NotificationsPage() {
       setPages(pagination?.totalPages || 1);
       setTotal(pagination?.totalItems || 0);
     } catch (e) {
+      // eslint-disable-next-line no-console
       console.error(e);
       toast.error(e.message || 'Błąd sieci lub serwera');
     } finally {
@@ -95,7 +95,11 @@ export default function NotificationsPage() {
   const onRead = async (id) => {
     try {
       await markNotificationRead(id, user?.id);
-      setRows(prev => prev.map(r => (r.id === id ? { ...r, isReadForUser: true } : r)));
+      setRows(prev =>
+        read === 'unread'
+          ? prev.filter(r => r.id !== id)                        // zniknij od razu z "Nieprzeczytane"
+          : prev.map(r => (r.id === id ? { ...r, isReadForUser: true } : r))
+      );
       notifyNavbar();
       toast.success('Oznaczono jako przeczytane');
     } catch (e) {
@@ -106,7 +110,11 @@ export default function NotificationsPage() {
   const onUnread = async (id) => {
     try {
       await markNotificationUnread(id, user?.id);
-      setRows(prev => prev.map(r => (r.id === id ? { ...r, isReadForUser: false } : r)));
+      setRows(prev =>
+        read === 'read'
+          ? prev.filter(r => r.id !== id)                        // zniknij od razu z "Przeczytane"
+          : prev.map(r => (r.id === id ? { ...r, isReadForUser: false } : r))
+      );
       notifyNavbar();
       toast.success('Oznaczono jako nieprzeczytane');
     } catch (e) {
@@ -178,7 +186,29 @@ export default function NotificationsPage() {
                   <td style={{ padding: 10 }}>{n.createdAt ? new Date(n.createdAt).toLocaleString() : '—'}</td>
                   <td style={{ padding: 10 }}>{n.type || '—'}</td>
                   <td style={{ padding: 10 }}>
-                    <div style={{ fontWeight: 600 }}>{n.title}</div>
+                    <div style={{ fontWeight: 600 }}>
+                      {/* Kliknięcie tytułu → przejście do szczegółów
+                         oraz optymistyczne oznaczenie jako przeczytane i ukrycie z listy „Nieprzeczytane” */}
+                      <Link
+                        to={`/notifications/${n.id}`}
+                        onClick={() => {
+                          if (!n.isReadForUser) {
+                            markNotificationRead(n.id, user?.id)
+                              .then(() => {
+                                setRows(prev =>
+                                  read === 'unread'
+                                    ? prev.filter(r => r.id !== n.id)
+                                    : prev.map(r => (r.id === n.id ? { ...r, isReadForUser: true } : r))
+                                );
+                                notifyNavbar();
+                              })
+                              .catch(() => { /* ignoruj błąd – i tak wejdziemy w szczegóły */ });
+                          }
+                        }}
+                      >
+                        {n.title}
+                      </Link>
+                    </div>
                     <div style={{ color: '#666' }}>{n.message}</div>
                   </td>
                   <td style={{ padding: 10 }}>

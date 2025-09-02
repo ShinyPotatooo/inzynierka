@@ -8,7 +8,7 @@ export async function listNotifications({
   limit = 20,
   type,
   priority,
-  isRead,
+  isRead,   // boolean|undefined
   role = 'all',
   userId,
 }) {
@@ -40,18 +40,14 @@ export async function markNotificationUnread(id, userId) {
   return data.data;
 }
 
-export async function dismissNotification(id, userId) {
-  const { data } = await API.post(`${BASE}/${id}/dismiss`, { userId });
-  return data.data;
-}
-
-export async function deleteNotificationGlobal(id, role = 'worker') {
-  const { data } = await API.delete(`${BASE}/${id}`, { params: { role } });
-  return data.data;
-}
-export const deleteNotification = deleteNotificationGlobal;
-
 export async function markAllRead(userId, role = 'all') {
   const { data } = await API.post(`${BASE}/mark-all-read`, { userId, role });
   return data.data;
+}
+
+export async function getNotification(id, { userId, role = 'all', markRead = false } = {}) {
+  const params = { userId, role };
+  if (markRead) params.markRead = 1;
+  const { data } = await API.get(`/notifications/${id}`, { params });
+  return data?.data?.notification;
 }

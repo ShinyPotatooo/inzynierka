@@ -14,6 +14,65 @@ const noCache = (res) => {
   res.set('Expires', '0');
 };
 
+// ⬇️ SZCZEGÓŁY POWIADOMIENIA (z opcją auto-READ)
+router.get('/:id', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const role = String(req.query.role || 'all');
+    const userId = req.query.userId ? Number(req.query.userId) : null;
+    const markRead = String(req.query.markRead || '') === '1';
+
+    noCache(res);
+
+    // Sprawdź widoczność po roli
+    const [[existsRow]] = await sequelize.query(
+      `SELECT 1 FROM notifications n WHERE n.id = :id AND ${roleFilterSql('n')} LIMIT 1`,
+      { replacements: { id, role } }
+    );
+    if (!existsRow) {
+      return res.status(404).json({ success: false, error: 'Powiadomienie nie istnieje lub brak dostępu' });
+    }
+
+    const notif = await Notification.findByPk(id, {
+      include: [
+        { model: Product, as: 'product', attributes: ['id', 'sku', 'name'] },
+        { model: User, as: 'user', attributes: ['id', 'username', 'firstName', 'lastName'] },
+        ...(userId ? [{
+          model: NotificationState,
+          as: 'states',
+          where: { userId },
+          required: false,
+          attributes: ['isRead', 'readAt'],
+        }] : []),
+      ],
+    });
+    if (!notif) return res.status(404).json({ success: false, error: 'Nie znaleziono' });
+
+    const j = notif.toJSON();
+    const st = Array.isArray(j.states) && j.states[0] ? j.states[0] : null;
+    let isReadForUser = !!(st && st.isRead);
+
+    // Auto-oznacz jako przeczytane po wejściu (opcjonalnie)
+    if (userId && markRead && !isReadForUser) {
+      await NotificationState.upsert({
+        notificationId: id,
+        userId,
+        isRead: true,
+        readAt: new Date(),
+      });
+      isReadForUser = true;
+    }
+
+    delete j.states;
+    j.isReadForUser = isReadForUser;
+
+    res.json({ success: true, data: { notification: j } });
+  } catch (err) {
+    console.error('Get notification details error:', err);
+    res.status(500).json({ success: false, error: 'Internal server error' });
+  }
+});
+
 /** 🔔 Licznik nieprzeczytanych dla usera */
 router.get('/unread/count', async (req, res) => {
   try {
@@ -171,7 +230,7 @@ router.patch('/:id/read', async (req, res) => {
       readAt: new Date(),
     });
 
-    res.json({ success: true, data: { id, userId, isReadForUser: true} });
+    res.json({ success: true, data: { id, userId, isReadForUser: true } });
   } catch (err) {
     console.error('Mark read error:', err);
     res.status(500).json({ success: false, error: 'Internal server error' });
@@ -223,9 +282,7 @@ router.post('/mark-all-read', async (req, res) => {
         isRead: true,
         readAt: new Date(),
       }));
-      await NotificationState.bulkCreate(payload, {
-        updateOnDuplicate: ['isRead', 'readAt'],
-      });
+      await NotificationState.bulkCreate(payload, { updateOnDuplicate: ['isRead', 'readAt'] });
     }
 
     res.json({ success: true, data: { marked: rows.length } });
