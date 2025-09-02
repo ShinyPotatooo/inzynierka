@@ -17,8 +17,8 @@ const numberOrNull = (v) => {
 
 export default function ProductPage() {
   const navigate = useNavigate();
-  const { id } = useParams(); // 'new' | ':id'
-  const isNew = id === 'new';
+  const { id } = useParams(); // może być undefined na /products/new
+  const isNew = !id || id === 'new'; // <-- KLUCZOWA ZMIANA
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -44,8 +44,14 @@ export default function ProductPage() {
 
   useEffect(() => {
     let ignore = false;
+
     const load = async () => {
       if (isNew) {
+        setLoading(false);
+        return;
+      }
+      if (!id) {
+        // ostrożność – gdyby jednak trafiło tu bez id
         setLoading(false);
         return;
       }
@@ -77,9 +83,9 @@ export default function ProductPage() {
         if (!ignore) setLoading(false);
       }
     };
+
     load();
     return () => { ignore = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, isNew]);
 
   const change = (k, v) => setForm((f) => ({ ...f, [k]: v }));
@@ -97,7 +103,6 @@ export default function ProductPage() {
 
     const { min, re, max } = levels;
 
-    // Dopuszczamy puste wartości, ale jeśli są, porównujemy sensownie
     if (min != null && max != null && min > max) {
       return 'Min nie może być większe niż Max';
     }
@@ -304,7 +309,6 @@ export default function ProductPage() {
           </div>
         </div>
 
-        {/* Hint walidacji progów */}
         <div style={{ marginTop: 8, color: '#666', fontSize: 13 }}>
           {levels.min != null || levels.re != null || levels.max != null ? (
             <>
@@ -340,4 +344,3 @@ export default function ProductPage() {
     </div>
   );
 }
-

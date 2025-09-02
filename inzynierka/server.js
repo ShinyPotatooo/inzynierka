@@ -13,17 +13,10 @@ const PORT = process.env.PORT || 3001;
 const ENV = process.env.NODE_ENV || 'development';
 const isDev = ENV !== 'production';
 
-/* ---------------------------------
-   Ustawienia podstawowe
----------------------------------- */
-
-// poprawne IP za proxy (na przyszłość)
+/* --------------------------------- */
 app.set('trust proxy', 1);
-
-// w DEV wyłączamy ETag -> unik 304 na JSON dla 🔔
 if (isDev) app.set('etag', false);
 
-// CORS (front na http://localhost:3000)
 app.use(
   cors({
     origin: 'http://localhost:3000',
@@ -34,7 +27,6 @@ app.use(
 );
 app.options('*', cors());
 
-// Security & body parsers
 app.use(
   helmet({
     crossOriginResourcePolicy: { policy: 'cross-origin' },
@@ -42,13 +34,9 @@ app.use(
 );
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-
-// Logger
 app.use(morgan(isDev ? 'dev' : 'combined'));
 
-/* ---------------------------------
-   Rate limitery
----------------------------------- */
+/* --------------------------------- */
 const skipOptions = (req) => req.method === 'OPTIONS';
 
 const optionsLimiter = rateLimit({
@@ -78,7 +66,7 @@ const apiLimiter = rateLimit({
     req.path.startsWith('/notifications/unread/count'),
 });
 
-// Ważna kolejność – najpierw konkretne limitery, potem ogólny
+// najpierw konkretne limitery
 app.use('/api/products/options', optionsLimiter);
 app.use('/api/notifications/unread/count', notificationsPollLimiter);
 app.use('/api', apiLimiter);
@@ -86,16 +74,25 @@ app.use('/api', apiLimiter);
 /* ---------------------------------
    Routes
 ---------------------------------- */
-const authRoutes = require('./routes/auth');
-const usersRoutes = require('./routes/users');
-const inventoryRoutes = require('./routes/inventory');
-const productRoutes = require('./routes/products');
-const notificationsRoutes = require('./routes/notifications');
+const authRoutes            = require('./routes/auth');
+const usersRoutes           = require('./routes/users');
+const inventoryRoutes       = require('./routes/inventory');
+const productRoutes         = require('./routes/products');
+const notificationsRoutes   = require('./routes/notifications');
+const inventoryExportRoutes = require('./routes/inventoryExport');
+const productsExportRoutes  = require('./routes/productExport'); // u Ciebie: productExport.js
 
-app.use('/api/auth', authRoutes);
+app.use('/api/auth',  authRoutes);
 app.use('/api/users', usersRoutes);
+
+// 🔴 NAJPIERW EKSPORTY – bardziej szczegółowe ścieżki typu /export.csv
+app.use('/api/inventory', inventoryExportRoutes);
+app.use('/api/products',  productsExportRoutes);
+
+// 🟢 POTEM OGÓLNE ROUTERY – zawierają m.in. /:id
 app.use('/api/inventory', inventoryRoutes);
-app.use('/api/products', productRoutes);
+app.use('/api/products',  productRoutes);
+
 app.use('/api/notifications', notificationsRoutes);
 
 // Healthcheck
@@ -118,13 +115,10 @@ app.use((err, _req, res, _next) => {
     (status === 429
       ? 'Za dużo zapytań — spróbuj ponownie za chwilę.'
       : 'Internal server error');
-
   res.status(status).json({ success: false, error: msg });
 });
 
-/* ---------------------------------
-   Start/stop serwera
----------------------------------- */
+/* --------------------------------- */
 let server = null;
 let shuttingDown = false;
 
@@ -137,13 +131,9 @@ async function start() {
       console.log(`🚀 Backend: http://localhost:${PORT}`);
     });
 
-    // 🔧 Szybsze zwalnianie gniazda przy restartach (nodemon)
-    // - wyłączamy keep-alive (połączenia nie wiszą)
-    // - krótszy timeout na nagłówki
     server.keepAliveTimeout = 0;
-    server.headersTimeout = 5000;
+    server.headersTimeout   = 5000;
 
-    // loguj, nie zabijaj procesu — nodemon zrobi swoje
     server.on('error', (err) => {
       if (err?.code === 'EADDRINUSE') {
         console.error('⚠️  Port zajęty (EADDRINUSE). Poprzednia instancja jeszcze zamyka gniazdo...');
@@ -179,7 +169,6 @@ async function closeGracefully(reason = 'shutdown') {
   }
 }
 
-// Sygnały z nodemon (Windows: SIGINT)
 ['SIGINT', 'SIGTERM', 'SIGUSR2'].forEach((sig) => {
   process.on(sig, async () => {
     await closeGracefully(sig);
@@ -187,7 +176,6 @@ async function closeGracefully(reason = 'shutdown') {
   });
 });
 
-// awaryjnie
 process.on('unhandledRejection', (err) => {
   console.error('UnhandledRejection:', err);
 });

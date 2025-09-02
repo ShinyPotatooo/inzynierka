@@ -4,22 +4,57 @@ const { User, ActivityLog } = require('../models');
 const bcrypt = require('bcrypt');
 const { Op } = require('sequelize');
 
+/* ---------------- Helpers ---------------- */
+
+const requireAdminAuth = async ({ requesterId, currentAdminPassword }) => {
+  if (!requesterId || !currentAdminPassword) {
+    const err = new Error('Deleting a user requires requesterId and currentAdminPassword');
+    err.status = 400;
+    throw err;
+  }
+  const requester = await User.findByPk(Number(requesterId));
+  if (!requester || requester.role !== 'admin') {
+    const err = new Error('Only admins can delete users');
+    err.status = 403;
+    throw err;
+  }
+  const ok = await bcrypt.compare(currentAdminPassword, requester.password);
+  if (!ok) {
+    const err = new Error('Invalid admin password');
+    err.status = 401;
+    throw err;
+  }
+  return requester;
+};
+
+const makeDeletedUsername = (base, id) => {
+  const suffix = `__del_${id}_${Date.now()}`;
+  const val = `${String(base || 'user').slice(0, 50 - suffix.length)}${suffix}`;
+  return val;
+};
+
+const makeDeletedEmail = (id) => {
+  // pozostaje poprawnym adresem i jest unikalny
+  const val = `deleted+${id}.${Date.now()}@example.invalid`;
+  return val.length > 100 ? val.slice(0, 100) : val;
+};
+
+/* ---------------- OPTIONS ---------------- */
 /**
- * GET /api/users/options
- * Lekkie podpowiedzi do wyszukiwania użytkowników (imię/nazwisko/login/email)
- * Zwraca: { success: true, data: { options: [{ id, label }] } }
+ * GET /api/users/options?query=...&limit=20
+ * podpowiedzi tylko dla aktywnych
  */
 router.get('/options', async (req, res) => {
   try {
     const query = String(req.query.query || '').trim();
     const limit = Math.min(Math.max(parseInt(req.query.limit || '20', 10), 1), 50);
 
-    // Nie obciążaj bazy przy zbyt krótkim zapytaniu
     if (query.length < 2) {
       return res.json({ success: true, data: { options: [] } });
     }
 
     const where = {
+      isActive: true,
       [Op.or]: [
         { username: { [Op.iLike]: `%${query}%` } },
         { email: { [Op.iLike]: `%${query}%` } },
@@ -31,10 +66,7 @@ router.get('/options', async (req, res) => {
     const users = await User.findAll({
       where,
       attributes: ['id', 'username', 'email', 'firstName', 'lastName'],
-      order: [
-        ['lastName', 'ASC'],
-        ['firstName', 'ASC'],
-      ],
+      order: [['lastName', 'ASC'], ['firstName', 'ASC']],
       limit,
     });
 
@@ -52,13 +84,15 @@ router.get('/options', async (req, res) => {
   }
 });
 
+/* ---------------- LIST ---------------- */
 // GET /api/users
 router.get('/', async (req, res) => {
   try {
-    const { page = 1, limit = 10, role } = req.query;
+    const { page = 1, limit = 10, role, includeInactive } = req.query;
     const offset = (Number(page) - 1) * Number(limit);
     const where = {};
     if (role) where.role = role;
+    if (!includeInactive) where.isActive = true; // domyślnie tylko aktywni
 
     const result = await User.findAndCountAll({
       where,
@@ -86,6 +120,7 @@ router.get('/', async (req, res) => {
   }
 });
 
+/* ---------------- GET ONE ---------------- */
 // GET /api/users/:id
 router.get('/:id', async (req, res) => {
   try {
@@ -101,6 +136,7 @@ router.get('/:id', async (req, res) => {
   }
 });
 
+/* ---------------- CREATE ---------------- */
 // POST /api/users
 router.post('/', async (req, res) => {
   try {
@@ -126,7 +162,8 @@ router.post('/', async (req, res) => {
   }
 });
 
-// PUT /api/users/:id  (z pełną logiką zmiany hasła jak u Ciebie)
+/* ---------------- UPDATE ---------------- */
+// PUT /api/users/:id
 router.put('/:id', async (req, res) => {
   try {
     const targetId = Number(req.params.id);
@@ -207,41 +244,43 @@ router.put('/:id', async (req, res) => {
   }
 });
 
+/* ---------------- DELETE (soft) ---------------- */
 // DELETE /api/users/:id
 router.delete('/:id', async (req, res) => {
   try {
+    const targetId = Number(req.params.id);
     const { requesterId, currentAdminPassword } = req.body || {};
-    const userToDelete = await User.findByPk(req.params.id);
 
+    // zawsze wymagamy hasła admina
+    await requireAdminAuth({ requesterId, currentAdminPassword });
+
+    const userToDelete = await User.findByPk(targetId);
     if (!userToDelete) return res.status(404).json({ success: false, error: 'User not found' });
 
+    // nie usuwaj ostatniego admina
     if (userToDelete.role === 'admin') {
-      if (!requesterId || !currentAdminPassword) {
-        return res.status(400).json({
-          success: false,
-          error: 'Deleting an admin requires requesterId and currentAdminPassword'
-        });
-      }
-      const requester = await User.findByPk(requesterId);
-      if (!requester || requester.role !== 'admin') {
-        return res.status(403).json({ success: false, error: 'Only admins can delete admins' });
-      }
-      const ok = await bcrypt.compare(currentAdminPassword, requester.password);
-      if (!ok) return res.status(401).json({ success: false, error: 'Invalid admin password' });
-
-      const adminsCount = await User.count({ where: { role: 'admin' } });
+      const adminsCount = await User.count({ where: { role: 'admin', isActive: true } });
       if (adminsCount <= 1) {
         return res.status(409).json({ success: false, error: 'Cannot delete the last admin user' });
       }
     }
 
-    await userToDelete.destroy();
-    return res.json({ success: true, data: { message: 'User deleted successfully' } });
+    // soft delete + zwolnienie unikalności
+    const nextUsername = makeDeletedUsername(userToDelete.username, userToDelete.id);
+    const nextEmail = makeDeletedEmail(userToDelete.id);
+
+    await userToDelete.update({
+      isActive: false,
+      username: nextUsername,
+      email: nextEmail,
+    });
+
+    return res.json({ success: true, data: { message: 'User deleted (deactivated) successfully' } });
   } catch (err) {
     console.error('Delete user error:', err);
-    return res.status(500).json({ success: false, error: 'Internal server error' });
+    const status = err.status || 500;
+    return res.status(status).json({ success: false, error: err.message || 'Internal server error' });
   }
 });
 
 module.exports = router;
-

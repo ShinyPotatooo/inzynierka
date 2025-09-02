@@ -8,6 +8,7 @@ import {
   deleteInventoryItem,
 } from '../services/inventory';
 import { getProductOptions } from '../services/products';
+import { downloadInventoryCSV, downloadInventoryPDF } from '../services/download';
 import OperationModal from '../components/Inventory/OperationModal';
 
 const sorters = [
@@ -218,6 +219,34 @@ export default function InventoryListPage() {
     load();
   };
 
+  // --- EKSPORT ---
+  const makeExportParams = () => ({
+    productId: productId || undefined,
+    location: loc || undefined,
+    supplier: supplier || undefined,
+    lowStock: onlyLow || undefined,
+  });
+
+  const onExportCSV = async () => {
+    try {
+      await finalizeProduct();
+      await downloadInventoryCSV(makeExportParams());
+    } catch (e) {
+      console.error(e);
+      toast.error(e.message || 'Nie udało się wyeksportować CSV');
+    }
+  };
+
+  const onExportPDF = async () => {
+    try {
+      await finalizeProduct();
+      await downloadInventoryPDF(makeExportParams());
+    } catch (e) {
+      console.error(e);
+      toast.error(e.message || 'Nie udało się wyeksportować PDF');
+    }
+  };
+
   return (
     <div style={{ padding: '2rem' }}>
       <h1>Magazyn</h1>
@@ -259,11 +288,16 @@ export default function InventoryListPage() {
           <input type="checkbox" checked={onlyLow} onChange={(e) => setOnlyLow(e.target.checked)} />
           Niski stan
         </label>
+
         <button onClick={applyFilters}>Szukaj</button>
         <button onClick={resetFilters}>Reset</button>
-        <button onClick={() => navigate('/inventory/new')} style={{ marginLeft: 'auto' }}>
-          + Dodaj pozycję
-        </button>
+
+        {/* EKSPORT */}
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+          <button onClick={onExportCSV} title="Eksportuj listę magazynu do CSV">Eksport CSV</button>
+          <button onClick={onExportPDF} title="Eksportuj listę magazynu do PDF">Eksport PDF</button>
+          <button onClick={() => navigate('/inventory/new')}>+ Dodaj pozycję</button>
+        </div>
       </div>
 
       {/* TABELA */}
@@ -410,11 +444,3 @@ export default function InventoryListPage() {
     </div>
   );
 }
-
-
-
-
-
-
-
-

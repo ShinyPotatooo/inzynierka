@@ -3,6 +3,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import { listProducts } from '../services/products';
+import { downloadProductsCSV, downloadProductsPDF } from '../services/download';
 
 const sorters = [
   { value: 'idAsc', label: 'ID rosnąco' },
@@ -77,6 +78,25 @@ export default function ProductsListPage() {
   const next = () => page < pages && load(page + 1, q);
   const prev = () => page > 1 && load(page - 1, q);
 
+  // --- EKSPORT ---
+  const exportParams = { search: q || undefined }; // te same filtry co lista
+  const onExportCSV = async () => {
+    try {
+      await downloadProductsCSV(exportParams);
+    } catch (e) {
+      console.error(e);
+      toast.error(e.message || 'Nie udało się wyeksportować CSV');
+    }
+  };
+  const onExportPDF = async () => {
+    try {
+      await downloadProductsPDF(exportParams);
+    } catch (e) {
+      console.error(e);
+      toast.error(e.message || 'Nie udało się wyeksportować PDF');
+    }
+  };
+
   return (
     <div style={{ padding: '2rem' }}>
       <h1>Produkty</h1>
@@ -97,6 +117,10 @@ export default function ProductsListPage() {
         </select>
 
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center' }}>
+          {/* eksport */}
+          <button onClick={onExportCSV} title="Eksportuj listę produktów do CSV">Eksport CSV</button>
+          <button onClick={onExportPDF} title="Eksportuj listę produktów do PDF">Eksport PDF</button>
+
           <span style={{ color: '#666', fontSize: 13 }}>
             {loading ? 'Ładowanie…' : `Wyniki: ${total}`}
           </span>

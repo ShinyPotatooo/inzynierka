@@ -25,10 +25,7 @@ export async function deleteProduct(id) {
   return true;
 }
 
-/**
- * Podpowiedzi produktów (nazwa/SKU).
- * Możesz podać { signal } jeśli chcesz anulować request lokalnie w komponencie.
- */
+/** Podpowiedzi (nazwa/SKU) */
 export async function getProductOptions(query = '', limit = 20, opts = {}) {
   const q = String(query).trim();
   if (q.length < 2) return [];
@@ -40,9 +37,10 @@ export async function getProductOptions(query = '', limit = 20, opts = {}) {
   return res.data.data.options; // [{ id, label }]
 }
 
+/** Pojedynczy produkt */
 export async function getProductById(id) {
+  if (!id) throw new Error('Brak identyfikatora produktu'); // <-- zabezpieczenie
   const res = await API.get(`/products/${id}`);
   if (!res.data?.success) throw new Error(res.data?.error || 'Błąd pobierania produktu');
   return res.data.data.product;
 }
-

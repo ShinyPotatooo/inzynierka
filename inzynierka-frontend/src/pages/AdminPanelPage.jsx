@@ -7,7 +7,7 @@ import {
   updateUserRole,
   setUserPassword,
   deleteUserById,
-  updateUserProfile,     // <-- NOWE
+  updateUserProfile,
 } from '../services/users';
 import { AuthContext } from '../context/AuthContext';
 
@@ -27,7 +27,7 @@ export default function AdminPanelPage() {
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
 
-  // tryb edycji (pojedynczy wiersz)
+  // tryb edycji
   const [editId, setEditId] = useState(null);
   const [editEmail, setEditEmail] = useState('');
   const [editUsername, setEditUsername] = useState('');
@@ -43,7 +43,7 @@ export default function AdminPanelPage() {
     }
   }, [user, logout, navigate]);
 
-  // podpowiadanie username z emaila (formularz dodawania)
+  // podpowiedź loginu z emaila
   useEffect(() => {
     if (email && !username) setUsername(email.split('@')[0]);
   }, [email, username]);
@@ -128,17 +128,19 @@ export default function AdminPanelPage() {
     }
   };
 
-  // usuń użytkownika
+  // ilu adminów
   const adminsCount = useMemo(() => users.filter(u => u.role === 'admin').length, [users]);
+
+  // usuń użytkownika (zawsze wymaga hasła admina)
   const handleDelete = async (u) => {
     if (!window.confirm(`Usunąć użytkownika ${u.email}?`)) return;
 
-    let adminPass;
-    if (u.role === 'admin') {
-      if (adminsCount <= 1) return toast.warn('Nie można usunąć ostatniego administratora');
-      adminPass = window.prompt('Podaj swoje hasło admina (wymagane):');
-      if (!adminPass) return;
+    if (u.role === 'admin' && adminsCount <= 1) {
+      return toast.warn('Nie można usunąć ostatniego administratora');
     }
+
+    const adminPass = window.prompt('Podaj swoje hasło admina (wymagane):');
+    if (!adminPass) return;
 
     try {
       await deleteUserById(u.id, { requesterId: user?.id, currentAdminPassword: adminPass });
@@ -299,7 +301,3 @@ export default function AdminPanelPage() {
     </div>
   );
 }
-
-
-
-
