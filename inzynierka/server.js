@@ -81,6 +81,7 @@ const productRoutes         = require('./routes/products');
 const notificationsRoutes   = require('./routes/notifications');
 const inventoryExportRoutes = require('./routes/inventoryExport');
 const productsExportRoutes  = require('./routes/productExport'); // u Ciebie: productExport.js
+const operationsExportRoutes = require('./routes/operationsExport');
 
 app.use('/api/auth',  authRoutes);
 app.use('/api/users', usersRoutes);
@@ -88,6 +89,7 @@ app.use('/api/users', usersRoutes);
 // 🔴 NAJPIERW EKSPORTY – bardziej szczegółowe ścieżki typu /export.csv
 app.use('/api/inventory', inventoryExportRoutes);
 app.use('/api/products',  productsExportRoutes);
+app.use('/api/inventory/operations', operationsExportRoutes);
 
 // 🟢 POTEM OGÓLNE ROUTERY – zawierają m.in. /:id
 app.use('/api/inventory', inventoryRoutes);

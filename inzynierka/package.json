@@ -12,7 +12,8 @@
     "db:seed": "sequelize-cli db:seed:all",
     "db:reset": "sequelize-cli db:drop && sequelize-cli db:create && sequelize-cli db:migrate && sequelize-cli db:seed:all",
     "db:test": "node scripts/test-database.js",
-    "db:setup": "chmod +x scripts/setup-database.sh && ./scripts/setup-database.sh"
+    "db:setup": "chmod +x scripts/setup-database.sh && ./scripts/setup-database.sh",
+    "postinstall": "node scripts/install-fonts.js"
   },
   "keywords": [
     "wms",

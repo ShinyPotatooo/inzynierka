@@ -1,14 +1,16 @@
 const express = require('express');
 const router = express.Router();
+const path = require('path');
+const fs = require('fs');
 const { Sequelize } = require('sequelize');
 const { sequelize, InventoryItem, Product } = require('../models');
 
 const isDev = (process.env.NODE_ENV || 'development') !== 'production';
 
 let PDFDocument;
-try { PDFDocument = require('pdfkit'); } catch (e) { console.warn('[inventoryExport] pdfkit not installed'); }
+try { PDFDocument = require('pdfkit'); } catch (_) { console.warn('[inventoryExport] pdfkit not installed'); }
 
-/* ---------- helpers ---------- */
+/* ---------- helpers: SQL ---------- */
 function buildWhereAndParams(q = {}) {
   const where = [];
   const params = {};
@@ -45,17 +47,14 @@ function quoteTableName(model) {
   const qi = sequelize.getQueryInterface();
   const qg = qi && qi.queryGenerator;
 
-  // nazwa tabeli może być stringiem albo obiektem { tableName, schema }
   const tn = model.getTableName();
   const tableName = typeof tn === 'object' ? tn.tableName : tn;
   const schema    = typeof tn === 'object' ? tn.schema    : undefined;
 
   if (qg && typeof qg.quoteTable === 'function') {
-    // standardowy, przenośny sposób w Sequelize v6
     return qg.quoteTable({ tableName, schema });
   }
 
-  // Fallback – ręczne cytowanie (gdyby queryGenerator nie był dostępny)
   const dialect = sequelize.getDialect();
   const q = (id) =>
     dialect === 'postgres'
@@ -101,7 +100,6 @@ async function runQuery(query, { logLabel } = {}) {
       replacements: params,
     });
 
-    // normalizacja liczb
     return rows.map(r => ({
       ...r,
       price: r.price == null ? null : Number(r.price),
@@ -122,8 +120,101 @@ async function runQuery(query, { logLabel } = {}) {
   }
 }
 
+/* ---------- helpers: PDF (font + tabela) ---------- */
+function registerFonts(doc) {
+  const regular = path.join(__dirname, '..', 'assets', 'fonts', 'NotoSans-Regular.ttf');
+  const bold    = path.join(__dirname, '..', 'assets', 'fonts', 'NotoSans-Bold.ttf');
+
+  const hasRegular = fs.existsSync(regular);
+  const hasBold    = fs.existsSync(bold);
+
+  if (hasRegular) doc.registerFont('PL-Regular', regular);
+  if (hasBold)    doc.registerFont('PL-Bold', bold);
+
+  return {
+    regular: hasRegular ? 'PL-Regular' : 'Helvetica',
+    bold:    hasBold    ? 'PL-Bold'    : 'Helvetica-Bold',
+  };
+}
+
+function drawTable(doc, cols, rows, opts = {}) {
+  const padY = opts.padY ?? 4;
+  const gapX = opts.gapX ?? 8;
+
+  let x0 = doc.page.margins.left;
+  let y  = opts.startY ?? doc.y;
+
+  // header
+  doc.font(opts.fonts.bold).fontSize(9);
+  let x = x0;
+  cols.forEach(c => {
+    doc.text(c.label, x, y, { width: c.width, align: c.align || 'left' });
+    x += c.width + gapX;
+  });
+  y = doc.y + 4;
+  doc.moveTo(doc.page.margins.left, y)
+     .lineTo(doc.page.width - doc.page.margins.right, y)
+     .strokeColor('#ddd').stroke();
+  y += 4;
+
+  doc.font(opts.fonts.regular);
+
+  const pageBottom = () => doc.page.height - doc.page.margins.bottom;
+
+  for (const r of rows) {
+    // compute cell heights
+    const heights = cols.map(c => {
+      let val = r[c.key] ?? '';
+      if (c.truncate && typeof val === 'string' && val.length > c.truncate) {
+        val = val.slice(0, c.truncate - 1) + '…';
+      }
+      return doc.heightOfString(String(val), { width: c.width, align: c.align || 'left' });
+    });
+    const rowH = Math.max(...heights, 10) + padY * 2;
+
+    // page break
+    if (y + rowH > pageBottom()) {
+      doc.addPage();
+      y = doc.page.margins.top;
+
+      // repeat header
+      doc.font(opts.fonts.bold).fontSize(9);
+      x = x0;
+      cols.forEach(c => {
+        doc.text(c.label, x, y, { width: c.width, align: c.align || 'left' });
+        x += c.width + gapX;
+      });
+      y = doc.y + 4;
+      doc.moveTo(doc.page.margins.left, y)
+         .lineTo(doc.page.width - doc.page.margins.right, y)
+         .strokeColor('#ddd').stroke();
+      y += 4;
+      doc.font(opts.fonts.regular);
+    }
+
+    // draw row
+    x = x0;
+    cols.forEach(c => {
+      let val = r[c.key] ?? '';
+      if (c.truncate && typeof val === 'string' && val.length > c.truncate) {
+        val = val.slice(0, c.truncate - 1) + '…';
+      }
+      doc.text(String(val), x, y + padY, { width: c.width, align: c.align || 'left' });
+      x += c.width + gapX;
+    });
+
+    y += rowH;
+  }
+
+  // bottom line
+  doc.moveTo(doc.page.margins.left, y)
+     .lineTo(doc.page.width - doc.page.margins.right, y)
+     .strokeColor('#eee').stroke();
+
+  doc.y = y + 6;
+}
+
 /* ---------- DEBUG JSON ---------- */
-// GET /api/inventory/export.debug
 router.get('/export.debug', async (req, res) => {
   try {
     const rows = await runQuery(req.query, { logLabel: 'inventoryExport.debug' });
@@ -158,7 +249,7 @@ router.get('/export.csv', async (req, res) => {
       return /[,"\n;]/.test(s) ? `"${s.replace(/"/g,'""')}"` : s;
     };
 
-    res.write('\uFEFF');
+    res.write('\uFEFF'); // BOM
     res.write(header.join(';') + '\n');
     for (const r of rows) {
       const line = [
@@ -186,7 +277,17 @@ router.get('/export.pdf', async (req, res) => {
     if (!PDFDocument) {
       return res.status(500).json({ success: false, error: 'PDF export not available (pdfkit not installed)' });
     }
-    const rows = await runQuery(req.query, { logLabel: 'inventoryExport.pdf' });
+    const rowsRaw = await runQuery(req.query, { logLabel: 'inventoryExport.pdf' });
+
+    const rows = rowsRaw.map(r => ({
+      ...r,
+      stock:    r.stock ?? '',
+      reserved: r.reserved ?? '',
+      available:r.available ?? '',
+      min:      r.min ?? '',
+      reorder:  r.reorder ?? '',
+      max:      r.max ?? '',
+    }));
 
     const now = new Date();
     const filename = `inventory_${now.toISOString().slice(0,19).replace(/[:T]/g,'-')}.pdf`;
@@ -196,68 +297,34 @@ router.get('/export.pdf', async (req, res) => {
     const doc = new PDFDocument({ size: 'A4', margin: 36 });
     doc.pipe(res);
 
-    doc.fontSize(16).text('Stan magazynowy – raport', { align: 'left' });
+    const fonts = registerFonts(doc);
+
+    doc.font(fonts.bold).fontSize(22).text('Stan magazynowy – raport');
     doc.moveDown(0.2);
-    doc.fontSize(10).fillColor('#666').text(`Wygenerowano: ${now.toLocaleString()}`).fillColor('black');
-    doc.moveDown(0.6);
+    doc.font(fonts.regular).fontSize(11).fillColor('#666')
+       .text(`Wygenerowano: ${now.toLocaleString('pl-PL')}`)
+       .fillColor('black');
+    doc.moveDown(0.8);
 
     const cols = [
-      { key: 'sku',       label: 'SKU',      width: 70 },
-      { key: 'name',      label: 'Nazwa',    width: 140 },
-      { key: 'category',  label: 'Kategoria',width: 70 },
-      { key: 'stock',     label: 'Stan',     width: 40, align: 'right' },
-      { key: 'reserved',  label: 'Zarezerw.',width: 55, align: 'right' },
-      { key: 'available', label: 'Dostępne', width: 55, align: 'right' },
-      { key: 'min',       label: 'Min',      width: 35, align: 'right' },
-      { key: 'reorder',   label: 'Reorder',  width: 50, align: 'right' },
-      { key: 'max',       label: 'Max',      width: 35, align: 'right' },
+      { key: 'sku',       label: 'SKU',        width: 95,  truncate: 22 },
+      { key: 'name',      label: 'Nazwa',      width: 200, truncate: 60 },
+      { key: 'category',  label: 'Kategoria',  width: 110, truncate: 26 },
+      { key: 'stock',     label: 'Stan',       width: 40,  align: 'right' },
+      { key: 'reserved',  label: 'Zarezerw.',  width: 60,  align: 'right' },
+      { key: 'available', label: 'Dostępne',   width: 60,  align: 'right' },
+      { key: 'min',       label: 'Min',        width: 35,  align: 'right' },
+      { key: 'reorder',   label: 'Reorder',    width: 50,  align: 'right' },
+      { key: 'max',       label: 'Max',        width: 35,  align: 'right' },
     ];
 
-    doc.font('Helvetica-Bold').fontSize(9);
-    let x = doc.page.margins.left;
-    let y = doc.y;
-    cols.forEach(c => { doc.text(c.label, x, y, { width: c.width, align: c.align || 'left' }); x += c.width + 6; });
-    doc.moveDown(0.2);
-    doc.moveTo(doc.page.margins.left, doc.y).lineTo(doc.page.width - doc.page.margins.right, doc.y).strokeColor('#ddd').stroke();
-    doc.moveDown(0.4);
-    doc.font('Helvetica');
+    drawTable(doc, cols, rows, { fonts });
 
-    const startX = doc.page.margins.left;
-    for (const r of rows) {
-      x = startX; y = doc.y;
-      const row = {
-        ...r,
-        stock: String(r.stock ?? ''),
-        reserved: String(r.reserved ?? ''),
-        available: String(r.available ?? ''),
-        min: String(r.min ?? ''),
-        reorder: String(r.reorder ?? ''),
-        max: String(r.max ?? ''),
-      };
-      cols.forEach(c => {
-        let val = row[c.key] ?? '';
-        if (c.key === 'name' && val.length > 40) val = val.slice(0, 37) + '…';
-        doc.text(val, x, y, { width: c.width, align: c.align || 'left' });
-        x += c.width + 6;
-      });
-      doc.moveDown(0.3);
-
-      if (doc.y > doc.page.height - doc.page.margins.bottom - 40) {
-        doc.addPage();
-        doc.font('Helvetica-Bold');
-        x = startX; y = doc.y;
-        cols.forEach(c => { doc.text(c.label, x, y, { width: c.width, align: c.align || 'left' }); x += c.width + 6; });
-        doc.moveDown(0.4);
-        doc.font('Helvetica');
-      }
-    }
-
-    const totalQty = rows.reduce((s, r) => s + (r.stock || 0), 0);
-    const totalAvail = rows.reduce((s, r) => s + (r.available || 0), 0);
+    const totalQty   = rowsRaw.reduce((s, r) => s + (r.stock || 0), 0);
+    const totalAvail = rowsRaw.reduce((s, r) => s + (r.available || 0), 0);
     doc.moveDown(0.6);
-    doc.moveTo(doc.page.margins.left, doc.y).lineTo(doc.page.width - doc.page.margins.right, doc.y).strokeColor('#ddd').stroke();
-    doc.moveDown(0.3);
-    doc.font('Helvetica-Bold').text(`Razem sztuk: ${totalQty} | Razem dostępne: ${totalAvail}`);
+    doc.font(fonts.bold).text(`Razem sztuk: ${totalQty} | Razem dostępne: ${totalAvail}`);
+
     doc.end();
   } catch (err) {
     const msg = isDev ? (err?.message || 'Internal error') : 'Internal server error';

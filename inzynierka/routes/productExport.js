@@ -1,79 +1,225 @@
-// inzynierka/routes/productsExport.js
 const express = require('express');
 const router = express.Router();
-const { Op } = require('sequelize');
-const { Product, InventoryItem } = require('../models');
+const path = require('path');
+const fs = require('fs');
+const { Sequelize } = require('sequelize');
+const { sequelize, Product, InventoryItem } = require('../models');
+
+const isDev = (process.env.NODE_ENV || 'development') !== 'production';
 
 let PDFDocument;
-try { PDFDocument = require('pdfkit'); } catch (e) { console.warn('[productsExport] pdfkit not installed'); }
+try { PDFDocument = require('pdfkit'); } catch (_) { console.warn('[productExport] pdfkit not installed'); }
 
-function buildWhere(q = {}) {
-  const where = {};
-  if (q.category) where.category = q.category;
-  if (q.brand) where.brand = q.brand;
-  if (q.status) where.status = q.status;
+/* ---------- helpers: SQL ---------- */
+function buildWhereAndParams(q = {}) {
+  const where = [];
+  const params = {};
+  const dialect = sequelize.getDialect();
+  const likeExpr = dialect === 'postgres'
+    ? (col) => `${col} ILIKE :term`
+    : (col) => `LOWER(${col}) LIKE LOWER(:term)`;
 
-  if (q.minPrice !== undefined && q.minPrice !== '') {
-    where.price = { [Op.gte]: parseFloat(q.minPrice) };
-  }
-  if (q.maxPrice !== undefined && q.maxPrice !== '') {
-    where.price = where.price || {};
-    where.price[Op.lte] = parseFloat(q.maxPrice);
-  }
+  if (q.category) { where.push(`p.category = :category`); params.category = String(q.category); }
+  if (q.brand)    { where.push(`p.brand = :brand`);       params.brand    = String(q.brand); }
+  if (q.status)   { where.push(`p.status = :status`);     params.status   = String(q.status); }
 
   if (q.search) {
-    where[Op.or] = [
-      { name: { [Op.iLike]: `%${q.search}%` } },
-      { sku: { [Op.iLike]: `%${q.search}%` } },
-      { description: { [Op.iLike]: `%${q.search}%` } },
-      { barcode: { [Op.iLike]: `%${q.search}%` } },
-    ];
+    where.push(`(
+      ${likeExpr('p.name')} OR
+      ${likeExpr('p.sku')} OR
+      ${likeExpr('p.barcode')} OR
+      ${likeExpr('p.description')}
+    )`);
+    params.term = `%${String(q.search)}%`;
   }
-  return where;
+
+  return { whereSql: where.length ? `WHERE ${where.join(' AND ')}` : '', params };
 }
 
-async function fetchRows(query) {
-  const where = buildWhere(query);
+function quoteTableName(model) {
+  const qi = sequelize.getQueryInterface();
+  const qg = qi && qi.queryGenerator;
 
-  const rows = await Product.findAll({
-    where,
-    order: [['createdAt', 'DESC']],
-    include: [
-      { model: InventoryItem, as: 'inventoryItems', attributes: ['quantity','reservedQuantity'] },
-    ],
-  });
+  const tn = model.getTableName();
+  const tableName = typeof tn === 'object' ? tn.tableName : tn;
+  const schema    = typeof tn === 'object' ? tn.schema    : undefined;
 
-  return rows.map(p => {
-    const json = p.toJSON();
-    const stock = (json.inventoryItems || []).reduce((s, it) => s + (it.quantity || 0), 0);
-    const reserved = (json.inventoryItems || []).reduce((s, it) => s + (it.reservedQuantity || 0), 0);
-    return {
-      sku: json.sku,
-      name: json.name,
-      category: json.category || '',
-      brand: json.brand || '',
-      unit: json.unit || '',
-      price: json.price != null ? Number(json.price) : null,
-      cost: json.cost != null ? Number(json.cost) : null,
-      barcode: json.barcode || '',
-      status: json.status || '',
-      min: json.minStockLevel ?? null,
-      reorder: json.reorderPoint ?? null,
-      max: json.maxStockLevel ?? null,
-      stock,
-      reserved,
-      available: stock - reserved,
-      createdAt: json.createdAt,
-      updatedAt: json.updatedAt,
-      id: json.id,
-    };
-  });
+  if (qg && typeof qg.quoteTable === 'function') {
+    return qg.quoteTable({ tableName, schema });
+  }
+
+  const dialect = sequelize.getDialect();
+  const q = (id) =>
+    dialect === 'postgres'
+      ? `"${String(id).replace(/"/g, '""')}"`
+      : `\`${String(id).replace(/`/g, '``')}\``;
+
+  return schema ? `${q(schema)}.${q(tableName)}` : q(tableName);
 }
+
+async function runQuery(query, { logLabel } = {}) {
+  const productsTable = quoteTableName(Product);
+  const itemsTable    = quoteTableName(InventoryItem);
+  const { whereSql, params } = buildWhereAndParams(query);
+
+  // agregacja stanów per produkt
+  const sql = `
+    SELECT
+      p."id",
+      p.sku,
+      p.name,
+      COALESCE(p.category, '')  AS category,
+      COALESCE(p.brand, '')     AS brand,
+      COALESCE(p.unit, '')      AS unit,
+      p.price,
+      p.status                  AS "productStatus",
+      p."minStockLevel"         AS min,
+      p."reorderPoint"          AS reorder,
+      p."maxStockLevel"         AS max,
+      COALESCE(SUM(i.quantity), 0)                       AS stock,
+      COALESCE(SUM(i."reservedQuantity"), 0)            AS reserved,
+      (COALESCE(SUM(i.quantity),0) - COALESCE(SUM(i."reservedQuantity"),0)) AS available
+    FROM ${productsTable} AS p
+    LEFT JOIN ${itemsTable} AS i ON i."productId" = p."id"
+    ${whereSql}
+    GROUP BY p."id"
+    ORDER BY p."createdAt" DESC
+  `;
+
+  try {
+    const rows = await sequelize.query(sql, {
+      type: Sequelize.QueryTypes.SELECT,
+      replacements: params,
+    });
+
+    return rows.map(r => ({
+      ...r,
+      price: r.price == null ? null : Number(r.price),
+      min: r.min == null ? null : Number(r.min),
+      reorder: r.reorder == null ? null : Number(r.reorder),
+      max: r.max == null ? null : Number(r.max),
+      stock: Number(r.stock || 0),
+      reserved: Number(r.reserved || 0),
+      available: Number(r.available || 0),
+    }));
+  } catch (err) {
+    console.error(`\n[${logLabel || 'productExport'}] RAW SQL ERROR`);
+    console.error('Dialect:', sequelize.getDialect());
+    console.error('SQL:\n', sql.trim());
+    console.error('Replacements:', params);
+    console.error('Message:', err?.message);
+    throw err;
+  }
+}
+
+/* ---------- helpers: PDF (font + tabela) ---------- */
+function registerFonts(doc) {
+  const regular = path.join(__dirname, '..', 'assets', 'fonts', 'NotoSans-Regular.ttf');
+  const bold    = path.join(__dirname, '..', 'assets', 'fonts', 'NotoSans-Bold.ttf');
+
+  const hasRegular = fs.existsSync(regular);
+  const hasBold    = fs.existsSync(bold);
+
+  if (hasRegular) doc.registerFont('PL-Regular', regular);
+  if (hasBold)    doc.registerFont('PL-Bold', bold);
+
+  return {
+    regular: hasRegular ? 'PL-Regular' : 'Helvetica',
+    bold:    hasBold    ? 'PL-Bold'    : 'Helvetica-Bold',
+  };
+}
+
+function drawTable(doc, cols, rows, opts = {}) {
+  const padY = opts.padY ?? 4;
+  const gapX = opts.gapX ?? 8;
+
+  let x0 = doc.page.margins.left;
+  let y  = opts.startY ?? doc.y;
+
+  // header
+  doc.font(opts.fonts.bold).fontSize(9);
+  let x = x0;
+  cols.forEach(c => {
+    doc.text(c.label, x, y, { width: c.width, align: c.align || 'left' });
+    x += c.width + gapX;
+  });
+  y = doc.y + 4;
+  doc.moveTo(doc.page.margins.left, y)
+     .lineTo(doc.page.width - doc.page.margins.right, y)
+     .strokeColor('#ddd').stroke();
+  y += 4;
+
+  doc.font(opts.fonts.regular);
+
+  const pageBottom = () => doc.page.height - doc.page.margins.bottom;
+
+  for (const r of rows) {
+    // compute cell heights
+    const heights = cols.map(c => {
+      let val = r[c.key] ?? '';
+      if (c.truncate && typeof val === 'string' && val.length > c.truncate) {
+        val = val.slice(0, c.truncate - 1) + '…';
+      }
+      return doc.heightOfString(String(val), { width: c.width, align: c.align || 'left' });
+    });
+    const rowH = Math.max(...heights, 10) + padY * 2;
+
+    if (y + rowH > pageBottom()) {
+      doc.addPage();
+      y = doc.page.margins.top;
+
+      // repeat header
+      doc.font(opts.fonts.bold).fontSize(9);
+      x = x0;
+      cols.forEach(c => {
+        doc.text(c.label, x, y, { width: c.width, align: c.align || 'left' });
+        x += c.width + gapX;
+      });
+      y = doc.y + 4;
+      doc.moveTo(doc.page.margins.left, y)
+         .lineTo(doc.page.width - doc.page.margins.right, y)
+         .strokeColor('#ddd').stroke();
+      y += 4;
+      doc.font(opts.fonts.regular);
+    }
+
+    // draw row
+    x = x0;
+    cols.forEach(c => {
+      let val = r[c.key] ?? '';
+      if (c.truncate && typeof val === 'string' && val.length > c.truncate) {
+        val = val.slice(0, c.truncate - 1) + '…';
+      }
+      doc.text(String(val), x, y + padY, { width: c.width, align: c.align || 'left' });
+      x += c.width + gapX;
+    });
+
+    y += rowH;
+  }
+
+  // bottom line
+  doc.moveTo(doc.page.margins.left, y)
+     .lineTo(doc.page.width - doc.page.margins.right, y)
+     .strokeColor('#eee').stroke();
+
+  doc.y = y + 6;
+}
+
+/* ---------- DEBUG ---------- */
+router.get('/export.debug', async (req, res) => {
+  try {
+    const rows = await runQuery(req.query, { logLabel: 'productExport.debug' });
+    res.json({ success: true, count: rows.length, rows });
+  } catch (err) {
+    const msg = isDev ? (err?.message || 'Internal error') : 'Internal server error';
+    res.status(500).json({ success: false, error: msg });
+  }
+});
 
 /* ---------- CSV ---------- */
 router.get('/export.csv', async (req, res) => {
   try {
-    const rows = await fetchRows(req.query);
+    const rows = await runQuery(req.query, { logLabel: 'productExport.csv' });
     const now = new Date();
     const filename = `products_${now.toISOString().slice(0,19).replace(/[:T]/g,'-')}.csv`;
 
@@ -81,11 +227,8 @@ router.get('/export.csv', async (req, res) => {
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
 
     const header = [
-      'SKU','Nazwa','Kategoria','Marka','Jednostka',
-      'Cena','Koszt','Barcode','Status',
-      'Min','Reorder','Max',
-      'Stan','Zarezerwowane','Dostępne',
-      'ID','Utworzono','Zaktualizowano'
+      'SKU','Nazwa','Kategoria','Cena',
+      'Stan','Dostępne','Min','Reorder'
     ];
 
     const esc = (v) => {
@@ -96,23 +239,23 @@ router.get('/export.csv', async (req, res) => {
 
     res.write('\uFEFF');
     res.write(header.join(';') + '\n');
-
     for (const r of rows) {
       const line = [
-        r.sku, r.name, r.category, r.brand, r.unit,
+        r.sku,
+        r.name,
+        r.category,
         r.price != null ? r.price.toFixed(2) : '',
-        r.cost != null ? r.cost.toFixed(2) : '',
-        r.barcode, r.status,
-        r.min, r.reorder, r.max,
-        r.stock, r.reserved, r.available,
-        r.id, r.createdAt?.toISOString() || '', r.updatedAt?.toISOString() || '',
+        r.stock,
+        r.available,
+        r.min ?? '',
+        r.reorder ?? '',
       ].map(esc).join(';');
       res.write(line + '\n');
     }
     res.end();
   } catch (err) {
-    console.error('products export.csv error:', err);
-    res.status(500).json({ success: false, error: 'Internal server error' });
+    const msg = isDev ? (err?.message || 'Internal error') : 'Internal server error';
+    res.status(500).json({ success: false, error: msg });
   }
 });
 
@@ -122,68 +265,51 @@ router.get('/export.pdf', async (req, res) => {
     if (!PDFDocument) {
       return res.status(500).json({ success: false, error: 'PDF export not available (pdfkit not installed)' });
     }
-    const rows = await fetchRows(req.query);
+    const rowsRaw = await runQuery(req.query, { logLabel: 'productExport.pdf' });
+
+    const rows = rowsRaw.map(r => ({
+      ...r,
+      price:    r.price != null ? r.price.toFixed(2) : '',
+      stock:    r.stock ?? '',
+      available:r.available ?? '',
+      min:      r.min ?? '',
+      reorder:  r.reorder ?? '',
+    }));
+
     const now = new Date();
     const filename = `products_${now.toISOString().slice(0,19).replace(/[:T]/g,'-')}.pdf`;
-
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
 
     const doc = new PDFDocument({ size: 'A4', margin: 36 });
     doc.pipe(res);
 
-    doc.fontSize(16).text('Produkty – raport', { align: 'left' });
+    const fonts = registerFonts(doc);
+
+    doc.font(fonts.bold).fontSize(22).text('Produkty – raport');
     doc.moveDown(0.2);
-    doc.fontSize(10).fillColor('#666').text(`Wygenerowano: ${now.toLocaleString()}`).fillColor('black');
-    doc.moveDown(0.6);
+    doc.font(fonts.regular).fontSize(11).fillColor('#666')
+       .text(`Wygenerowano: ${now.toLocaleString('pl-PL')}`)
+       .fillColor('black');
+    doc.moveDown(0.8);
 
     const cols = [
-      { key: 'sku', label: 'SKU', width: 65 },
-      { key: 'name', label: 'Nazwa', width: 140 },
-      { key: 'category', label: 'Kategoria', width: 70 },
-      { key: 'price', label: 'Cena', width: 45, align: 'right' },
-      { key: 'stock', label: 'Stan', width: 40, align: 'right' },
-      { key: 'available', label: 'Dostępne', width: 55, align: 'right' },
-      { key: 'min', label: 'Min', width: 35, align: 'right' },
-      { key: 'reorder', label: 'Reorder', width: 50, align: 'right' },
-      { key: 'max', label: 'Max', width: 35, align: 'right' },
+      { key: 'sku',      label: 'SKU',       width: 95,  truncate: 22 },
+      { key: 'name',     label: 'Nazwa',     width: 240, truncate: 70 },
+      { key: 'category', label: 'Kategoria', width: 120, truncate: 30 },
+      { key: 'price',    label: 'Cena',      width: 60,  align: 'right' },
+      { key: 'stock',    label: 'Stan',      width: 40,  align: 'right' },
+      { key: 'available',label: 'Dostępne',  width: 60,  align: 'right' },
+      { key: 'min',      label: 'Min',       width: 35,  align: 'right' },
+      { key: 'reorder',  label: 'Reorder',   width: 50,  align: 'right' },
     ];
 
-    doc.font('Helvetica-Bold').fontSize(9);
-    let x = doc.page.margins.left;
-    let y = doc.y;
-    cols.forEach(c => { doc.text(c.label, x, y, { width: c.width, align: c.align || 'left' }); x += c.width + 6; });
-    doc.moveDown(0.2);
-    doc.moveTo(doc.page.margins.left, doc.y).lineTo(doc.page.width - doc.page.margins.right, doc.y).strokeColor('#ddd').stroke();
-    doc.moveDown(0.4);
-    doc.font('Helvetica');
-
-    const startX = doc.page.margins.left;
-    for (const r0 of rows) {
-      const r = { ...r0, price: r0.price != null ? r0.price.toFixed(2) : '' };
-      x = startX; y = doc.y;
-      cols.forEach(c => {
-        let val = r[c.key] ?? '';
-        if (c.key === 'name' && val.length > 40) val = val.slice(0, 37) + '…';
-        doc.text(String(val), x, y, { width: c.width, align: c.align || 'left' });
-        x += c.width + 6;
-      });
-      doc.moveDown(0.3);
-
-      if (doc.y > doc.page.height - doc.page.margins.bottom - 40) {
-        doc.addPage();
-        doc.font('Helvetica-Bold');
-        x = startX; y = doc.y;
-        cols.forEach(c => { doc.text(c.label, x, y, { width: c.width, align: c.align || 'left' }); x += c.width + 6; });
-        doc.moveDown(0.4);
-        doc.font('Helvetica');
-      }
-    }
+    drawTable(doc, cols, rows, { fonts });
 
     doc.end();
   } catch (err) {
-    console.error('products export.pdf error:', err);
-    res.status(500).json({ success: false, error: 'Internal server error' });
+    const msg = isDev ? (err?.message || 'Internal error') : 'Internal server error';
+    res.status(500).json({ success: false, error: msg });
   }
 });
 

@@ -69,3 +69,31 @@ export async function downloadProductsPDF(params = {}) {
   const a = document.createElement('a'); a.href = url; a.download = filename; a.click();
   URL.revokeObjectURL(url);
 }
+
+/* -------- OPERATIONS (NOWE) -------- */
+// Eksportuje pełny zestaw wg filtrów: search, type, user, dateFrom, dateTo
+export async function downloadOperationsCSV(params = {}) {
+  const res = await API.get('/inventory/operations/export.csv', {
+    params: cleanParams(params),
+    responseType: 'blob',
+  });
+  const fallback = `operations_${new Date().toISOString().slice(0,19).replace(/[:T]/g,'-')}.csv`;
+  const filename = filenameFromDisposition(res.headers?.['content-disposition'], fallback);
+  const blob = new Blob([res.data], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href = url; a.download = filename; a.click();
+  URL.revokeObjectURL(url);
+}
+
+export async function downloadOperationsPDF(params = {}) {
+  const res = await API.get('/inventory/operations/export.pdf', {
+    params: cleanParams(params),
+    responseType: 'blob',
+  });
+  const fallback = `operations_${new Date().toISOString().slice(0,19).replace(/[:T]/g,'-')}.pdf`;
+  const filename = filenameFromDisposition(res.headers?.['content-disposition'], fallback);
+  const blob = new Blob([res.data], { type: 'application/pdf' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href = url; a.download = filename; a.click();
+  URL.revokeObjectURL(url);
+}
