@@ -16,7 +16,7 @@ function bySorter(v) {
   if (v === 'idDesc') return (a, b) => b.id - a.id;
   if (v === 'nameAsc') return (a, b) => (a.name || '').localeCompare(b.name || '');
   if (v === 'nameDesc') return (a, b) => (b.name || '').localeCompare(a.name || '');
-  return (a, b) => a.id - b.id; // idAsc (domyślnie)
+  return (a, b) => a.id - b.id; // idAsc (domyślne)
 }
 
 export default function ProductsListPage() {
@@ -28,10 +28,15 @@ export default function ProductsListPage() {
   const [q, setQ] = useState('');
   const [sort, setSort] = useState('idAsc');
 
+  // paginacja z backendu
   const [page, setPage] = useState(1);
   const [limit] = useState(20);
   const [pages, setPages] = useState(1);
   const [total, setTotal] = useState(0);
+
+  // przełącznik: Lp. (numeracja od 1) vs prawdziwe ID
+  const [showSequential, setShowSequential] = useState(true);
+  const rowNo = (idx) => (page - 1) * limit + idx + 1;
 
   const timer = useRef(null);
 
@@ -79,7 +84,7 @@ export default function ProductsListPage() {
   const prev = () => page > 1 && load(page - 1, q);
 
   // --- EKSPORT ---
-  const exportParams = { search: q || undefined }; // te same filtry co lista
+  const exportParams = { search: q || undefined };
   const onExportCSV = async () => {
     try {
       await downloadProductsCSV(exportParams);
@@ -116,6 +121,10 @@ export default function ProductsListPage() {
           ))}
         </select>
 
+        <button onClick={() => setShowSequential(v => !v)}>
+          {showSequential ? 'Pokaż ID' : 'Numeruj od 1'}
+        </button>
+
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center' }}>
           {/* eksport */}
           <button onClick={onExportCSV} title="Eksportuj listę produktów do CSV">Eksport CSV</button>
@@ -124,15 +133,11 @@ export default function ProductsListPage() {
           <span style={{ color: '#666', fontSize: 13 }}>
             {loading ? 'Ładowanie…' : `Wyniki: ${total}`}
           </span>
-          <button disabled={page <= 1} onClick={prev}>
-            ←
-          </button>
+          <button disabled={page <= 1} onClick={prev}>←</button>
           <span style={{ minWidth: 60, textAlign: 'center' }}>
             {page} / {pages}
           </span>
-          <button disabled={page >= pages} onClick={next}>
-            →
-          </button>
+          <button disabled={page >= pages} onClick={next}>→</button>
           <button onClick={() => navigate('/products/new')} style={{ marginLeft: 8 }}>
             + Dodaj produkt
           </button>
@@ -143,7 +148,9 @@ export default function ProductsListPage() {
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead>
             <tr style={{ background: '#fafafa' }}>
-              <th style={{ textAlign: 'left', padding: 10 }}>ID</th>
+              <th style={{ textAlign: 'left', padding: 10 }}>
+                {showSequential ? 'Lp.' : 'ID'}
+              </th>
               <th style={{ textAlign: 'left', padding: 10 }}>SKU</th>
               <th style={{ textAlign: 'left', padding: 10 }}>Nazwa</th>
               <th style={{ textAlign: 'left', padding: 10 }}>Kategoria</th>
@@ -159,20 +166,18 @@ export default function ProductsListPage() {
           <tbody>
             {loading ? (
               <tr>
-                <td colSpan={11} style={{ padding: 16 }}>
-                  Ładowanie…
-                </td>
+                <td colSpan={11} style={{ padding: 16 }}>Ładowanie…</td>
               </tr>
             ) : visible.length === 0 ? (
               <tr>
-                <td colSpan={11} style={{ padding: 16 }}>
-                  Brak produktów
-                </td>
+                <td colSpan={11} style={{ padding: 16 }}>Brak produktów</td>
               </tr>
             ) : (
-              visible.map((p) => (
+              visible.map((p, idx) => (
                 <tr key={p.id} style={{ borderTop: '1px solid #eee' }}>
-                  <td style={{ padding: 10, width: 60 }}>{p.id}</td>
+                  <td style={{ padding: 10, width: 60 }}>
+                    {showSequential ? rowNo(idx) : p.id}
+                  </td>
                   <td style={{ padding: 10, width: 140 }}>{p.sku}</td>
                   <td style={{ padding: 10 }}>
                     <div style={{ fontWeight: 600 }}>{p.name}</div>

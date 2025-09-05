@@ -1,3 +1,4 @@
+// src/pages/InventoryListPage.jsx
 import React, { useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { toast } from 'react-toastify';
@@ -45,6 +46,9 @@ export default function InventoryListPage() {
   const [supplier, setSupplier] = useState('');
   const [onlyLow, setOnlyLow] = useState(false);
   const [sort, setSort] = useState('idAsc');
+
+  // --- Lp. vs ID ---
+  const [showSequential, setShowSequential] = useState(true); // true = Lp. 1..N, false = real ID
 
   // --- EDYCJA ---
   const [editId, setEditId] = useState(null);
@@ -278,6 +282,11 @@ export default function InventoryListPage() {
             <option key={s.value} value={s.value}>{`Sort: ${s.label}`}</option>
           ))}
         </select>
+
+        <button onClick={() => setShowSequential(v => !v)}>
+          {showSequential ? 'Pokaż ID' : 'Numeruj od 1'}
+        </button>
+
         <input
           placeholder="Dostawca"
           value={supplier}
@@ -305,7 +314,9 @@ export default function InventoryListPage() {
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead>
             <tr style={{ background: '#fafafa' }}>
-              <th style={{ textAlign: 'left', padding: 10 }}>ID</th>
+              <th style={{ textAlign: 'left', padding: 10 }}>
+                {showSequential ? 'Lp.' : 'ID'}
+              </th>
               <th style={{ textAlign: 'left', padding: 10 }}>Produkt</th>
               <th style={{ textAlign: 'left', padding: 10 }}>Lokalizacja</th>
               <th style={{ textAlign: 'left', padding: 10 }}>Ilość</th>
@@ -321,13 +332,16 @@ export default function InventoryListPage() {
             ) : visible.length === 0 ? (
               <tr><td colSpan={8} style={{ padding: 16 }}>Brak pozycji</td></tr>
             ) : (
-              visible.map((row) => {
+              visible.map((row, idx) => {
                 const available = (row.quantity || 0) - (row.reservedQuantity || 0);
                 const isEdit = editId === row.id;
 
                 return (
                   <tr key={row.id} style={{ borderTop: '1px solid #eee' }}>
-                    <td style={{ padding: 10, width: 60 }}>{row.id}</td>
+                    <td style={{ padding: 10, width: 60 }}>
+                      {showSequential ? (idx + 1) : row.id}
+                    </td>
+
                     <td style={{ padding: 10 }}>
                       <div style={{ display: 'flex', gap: 8, alignItems: 'baseline' }}>
                         <strong>{row.product?.name || '—'}</strong>
