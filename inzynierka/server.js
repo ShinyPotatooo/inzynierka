@@ -82,6 +82,9 @@ const notificationsRoutes   = require('./routes/notifications');
 const inventoryExportRoutes = require('./routes/inventoryExport');
 const productsExportRoutes  = require('./routes/productExport'); // u Ciebie: productExport.js
 const operationsExportRoutes = require('./routes/operationsExport');
+const categoriesRoutes = require('./routes/categories');
+const locationsRoutes  = require('./routes/locations');
+const dictionariesRoutes = require('./routes/dictionaries');
 
 app.use('/api/auth',  authRoutes);
 app.use('/api/users', usersRoutes);
@@ -96,6 +99,9 @@ app.use('/api/inventory', inventoryRoutes);
 app.use('/api/products',  productRoutes);
 
 app.use('/api/notifications', notificationsRoutes);
+app.use('/api/categories', categoriesRoutes);
+app.use('/api/locations',  locationsRoutes);
+app.use('/api/dictionaries', dictionariesRoutes);
 
 // Healthcheck
 app.get('/api', (_req, res) => {

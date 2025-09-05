@@ -8,6 +8,7 @@ import {
   updateProduct,
   deleteProduct,
 } from '../services/products';
+import { getCategoryOptions, ensureCategory } from '../services/categories';
 
 const numberOrNull = (v) => {
   if (v === '' || v === null || v === undefined) return null;
@@ -17,8 +18,8 @@ const numberOrNull = (v) => {
 
 export default function ProductPage() {
   const navigate = useNavigate();
-  const { id } = useParams(); // może być undefined na /products/new
-  const isNew = !id || id === 'new'; // <-- KLUCZOWA ZMIANA
+  const { id } = useParams(); // 'new' | ':id'
+  const isNew = id === 'new';
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -28,7 +29,7 @@ export default function ProductPage() {
     sku: '',
     name: '',
     description: '',
-    category: '',
+    category: '',       // <-- tekst kategorii (zgodny z kolumną w DB)
     brand: '',
     unit: 'szt',
     price: '',
@@ -42,51 +43,68 @@ export default function ProductPage() {
     imageUrl: '',
   });
 
+  // --- kategorie: autosugestia
+  const [catQuery, setCatQuery] = useState('');
+  const [catOpts, setCatOpts] = useState([]);
   useEffect(() => {
     let ignore = false;
-
-    const load = async () => {
-      if (isNew) {
-        setLoading(false);
-        return;
-      }
-      if (!id) {
-        // ostrożność – gdyby jednak trafiło tu bez id
-        setLoading(false);
-        return;
-      }
+    const q = catQuery.trim();
+    if (q.length < 1) { setCatOpts([]); return; }
+    (async () => {
       try {
-        setLoading(true);
-        const p = await getProductById(id);
-        if (ignore) return;
-        setForm({
-          sku: p.sku || '',
-          name: p.name || '',
-          description: p.description || '',
-          category: p.category || '',
-          brand: p.brand || '',
-          unit: p.unit || 'szt',
-          price: p.price ?? '',
-          cost: p.cost ?? '',
-          minStockLevel: p.minStockLevel ?? '',
-          reorderPoint: p.reorderPoint ?? '',
-          maxStockLevel: p.maxStockLevel ?? '',
-          status: p.status || 'active',
-          weight: p.weight ?? '',
-          barcode: p.barcode || '',
-          imageUrl: p.imageUrl || '',
-        });
-      } catch (e) {
-        console.error(e);
-        toast.error(e.message || 'Błąd pobierania produktu');
-      } finally {
-        if (!ignore) setLoading(false);
+        const opts = await getCategoryOptions(q, 20);
+        if (!ignore) setCatOpts(opts || []);
+      } catch {
+        if (!ignore) setCatOpts([]);
       }
-    };
-
-    load();
+    })();
     return () => { ignore = true; };
-  }, [id, isNew]);
+  }, [catQuery]);
+
+// --- załaduj produkt do edycji
+useEffect(() => {
+  let ignore = false;
+
+  const load = async () => {
+    // ⬇⬇⬇ kluczowa linia — nie pobieraj nic, jeśli nie ma id lub to /new
+    if (!id || id === 'new') {
+      setLoading(false);
+      return;
+    }
+
+    try {
+      setLoading(true);
+      const p = await getProductById(id);
+      if (ignore) return;
+      setForm({
+        sku: p.sku || '',
+        name: p.name || '',
+        description: p.description || '',
+        category: p.category || '',
+        brand: p.brand || '',
+        unit: p.unit || 'szt',
+        price: p.price ?? '',
+        cost: p.cost ?? '',
+        minStockLevel: p.minStockLevel ?? '',
+        reorderPoint: p.reorderPoint ?? '',
+        maxStockLevel: p.maxStockLevel ?? '',
+        status: p.status || 'active',
+        weight: p.weight ?? '',
+        barcode: p.barcode || '',
+        imageUrl: p.imageUrl || '',
+      });
+    } catch (e) {
+      console.error(e);
+      toast.error(e.message || 'Błąd pobierania produktu');
+    } finally {
+      if (!ignore) setLoading(false);
+    }
+  };
+
+  load();
+  return () => { ignore = true; };
+}, [id]); // <= wystarczy samo id
+
 
   const change = (k, v) => setForm((f) => ({ ...f, [k]: v }));
 
@@ -100,36 +118,32 @@ export default function ProductPage() {
   const validate = () => {
     if (!form.sku.trim()) return 'SKU jest wymagane';
     if (!form.name.trim()) return 'Nazwa jest wymagana';
-
     const { min, re, max } = levels;
-
-    if (min != null && max != null && min > max) {
-      return 'Min nie może być większe niż Max';
-    }
-    if (re != null && min != null && re < min) {
-      return 'Reorder nie może być mniejsze niż Min';
-    }
-    if (re != null && max != null && re > max) {
-      return 'Reorder nie może być większe niż Max';
-    }
+    if (min != null && max != null && min > max) return 'Min nie może być większe niż Max';
+    if (re != null && min != null && re < min)   return 'Reorder nie może być mniejsze niż Min';
+    if (re != null && max != null && re > max)   return 'Reorder nie może być większe niż Max';
     return null;
   };
 
   const submit = async (e) => {
     e.preventDefault();
     const err = validate();
-    if (err) {
-      toast.warn(err);
-      return;
-    }
+    if (err) { toast.warn(err); return; }
 
     try {
       setSaving(true);
+
+      // auto-utworzenie kategorii w słowniku (nie zmieniamy schematu DB – dalej zapisujemy string)
+      const categoryText = form.category?.trim() || '';
+      if (categoryText) {
+        try { await ensureCategory(categoryText); } catch (_) {}
+      }
+
       const payload = {
         sku: form.sku.trim(),
         name: form.name.trim(),
         description: form.description || undefined,
-        category: form.category || undefined,
+        category: categoryText || undefined, // <- string jak dotychczas
         brand: form.brand || undefined,
         unit: form.unit || 'szt',
         price: numberOrNull(form.price),
@@ -218,7 +232,18 @@ export default function ProductPage() {
 
           <div>
             <label>Kategoria</label>
-            <input value={form.category} onChange={(e) => change('category', e.target.value)} />
+            <input
+              list="category-options"
+              value={form.category}
+              onChange={(e) => { change('category', e.target.value); setCatQuery(e.target.value); }}
+              placeholder="np. Elektronika"
+            />
+            <datalist id="category-options">
+              {catOpts.map(o => <option key={o.id} value={o.label} />)}
+            </datalist>
+            <div style={{ color:'#666', fontSize:12, marginTop:4 }}>
+              Wpis ręczny utworzy nową kategorię w słowniku.
+            </div>
           </div>
           <div>
             <label>Marka</label>
@@ -309,6 +334,7 @@ export default function ProductPage() {
           </div>
         </div>
 
+        {/* Hint walidacji progów */}
         <div style={{ marginTop: 8, color: '#666', fontSize: 13 }}>
           {levels.min != null || levels.re != null || levels.max != null ? (
             <>

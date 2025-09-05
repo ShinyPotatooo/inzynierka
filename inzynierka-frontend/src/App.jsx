@@ -24,6 +24,7 @@ import { AuthProvider } from './context/AuthContext';
 
 import NotificationDetailsPage from './pages/NotificationDetailsPage';
 import NotificationsPage from './pages/NotificationsPage'; // ← bez .jsx (mniej kłopotów z TS/casing)
+import DictionariesPage from './pages/DictionariesPage';
 
 function LayoutWrapper({ children }) {
   const location = useLocation();
@@ -173,6 +174,16 @@ export default function App() {
             </PrivateRoute>
           }
         />
+        <Route
+  path="/dictionaries"
+  element={
+    <PrivateRoute allowedRoles={['admin', 'manager']}>
+      <LayoutWrapper>
+        <DictionariesPage />
+      </LayoutWrapper>
+    </PrivateRoute>
+  }
+/>
       </Routes>
     </AuthProvider>
   );
