@@ -4,9 +4,16 @@ import { toast } from 'react-toastify';
 import { AuthContext } from '../../context/AuthContext';
 import { createInventoryOperation } from '../../services/inventory';
 
-function todayISO() {
+// helpery do wartości startowej dla <input type="datetime-local">
+const pad = (n) => String(n).padStart(2, '0');
+function nowLocalInput() {
   const d = new Date();
-  return d.toISOString().slice(0, 10);
+  const yyyy = d.getFullYear();
+  const mm = pad(d.getMonth() + 1);
+  const dd = pad(d.getDate());
+  const hh = pad(d.getHours());
+  const mi = pad(d.getMinutes());
+  return `${yyyy}-${mm}-${dd}T${hh}:${mi}`;
 }
 
 export default function OperationModal({ open, type, item, onClose, onDone }) {
@@ -14,7 +21,7 @@ export default function OperationModal({ open, type, item, onClose, onDone }) {
   const userId = user?.id ?? 1;
 
   const [qty, setQty] = useState('');
-  const [date, setDate] = useState(todayISO());
+  const [date, setDate] = useState(nowLocalInput()); // lokalny datetime
   const [notes, setNotes] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
@@ -45,6 +52,7 @@ export default function OperationModal({ open, type, item, onClose, onDone }) {
         operationType: type, // 'in' | 'out'
         quantity: q,
         userId,
+        // wysyłamy lokalny datetime z <input type="datetime-local">
         operationDate: date,
         notes: notes?.trim() || (type === 'in' ? 'Przyjęcie (UI)' : 'Wydanie (UI)'),
       });
@@ -103,7 +111,7 @@ export default function OperationModal({ open, type, item, onClose, onDone }) {
           <label>
             Data operacji
             <input
-              type="date"
+              type="datetime-local"
               value={date}
               onChange={(e) => setDate(e.target.value)}
               style={{ marginLeft: 8 }}

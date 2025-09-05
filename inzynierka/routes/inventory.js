@@ -3,6 +3,7 @@ const express = require('express');
 const router = express.Router();
 const { Op, literal } = require('sequelize');
 const { InventoryItem, InventoryOperation, Product, User } = require('../models');
+const { recomputeAndNotifyLowStock } = require('../utils/lowStock'); // <— DODANE
 
 /* ===========================
    Helpers
@@ -262,7 +263,6 @@ router.post('/', async (req, res) => {
       return res.status(400).json({ success: false, error: 'Product not found' });
     }
 
-    // sensowne wartości domyślne zamiast NULL
     const ensuredBatch = batchNumber || await generateBatchNumber(InventoryItem, productId);
     const ensuredPO = purchaseOrderNumber || await generatePurchaseOrderNumber(InventoryItem);
     const ensuredSupplier = supplier ?? 'Nieznany';
@@ -295,6 +295,9 @@ router.post('/', async (req, res) => {
       notes: 'Initial stock entry',
     });
 
+    // >>> GENERUJ ALERT NISKIEGO STANU (globalny) <<<
+    try { await recomputeAndNotifyLowStock(productId); } catch (e) { console.warn('lowStock recompute failed:', e?.message); }
+
     const itemWithProduct = await InventoryItem.findByPk(item.id, {
       include: [{ model: Product, as: 'product', attributes: ['id', 'sku', 'name', 'category', 'brand'] }],
     });
@@ -318,35 +321,31 @@ router.put('/:id', async (req, res) => {
     const item = await InventoryItem.findByPk(req.params.id);
     if (!item) return res.status(404).json({ success: false, error: 'Inventory item not found' });
 
-    // zapamiętaj stan sprzed zmiany
     const prevQty = item.quantity;
 
-    // przygotuj update
     const update = { ...req.body };
     if (update.quantity != null) update.quantity = parseInt(update.quantity, 10);
     if (update.reservedQuantity != null) update.reservedQuantity = parseInt(update.reservedQuantity, 10);
     if (update.expiryDate) update.expiryDate = new Date(update.expiryDate);
     if (update.manufacturingDate) update.manufacturingDate = new Date(update.manufacturingDate);
-
-    // ustaw kto zmienia (jeśli przyszło z frontu)
-    if (req.body.lastUpdatedBy != null) {
-      update.lastUpdatedBy = Number(req.body.lastUpdatedBy);
-    }
+    if (req.body.lastUpdatedBy != null) update.lastUpdatedBy = Number(req.body.lastUpdatedBy);
 
     await item.update(update);
 
-    // jeśli ilość się zmieniła — zapisz operację "adjustment"
     if (update.quantity != null && update.quantity !== prevQty) {
-      const delta = update.quantity - prevQty; // + dodatnia, - ujemna
+      const delta = update.quantity - prevQty; // + lub -
       await InventoryOperation.create({
         inventoryItemId: item.id,
         productId: item.productId,
         operationType: 'adjustment',
         quantity: Math.abs(delta),
-        userId: update.lastUpdatedBy ?? 1, // fallback jeśli nie podano
+        userId: update.lastUpdatedBy ?? 1,
         operationDate: new Date(),
         notes: `Manual quantity change via UI: ${prevQty} → ${update.quantity}`
       });
+
+      // >>> GENERUJ ALERT NISKIEGO STANU (globalny) <<<
+      try { await recomputeAndNotifyLowStock(item.productId); } catch (e) { console.warn('lowStock recompute failed:', e?.message); }
     }
 
     res.json({
@@ -358,7 +357,6 @@ router.put('/:id', async (req, res) => {
     res.status(500).json({ success: false, error: 'Internal server error' });
   }
 });
-
 
 /* ===========================
    DELETE /api/inventory/:id
@@ -374,7 +372,12 @@ router.delete('/:id', async (req, res) => {
       return res.status(400).json({ success: false, error: 'Cannot delete inventory item with stock' });
     }
 
+    const productId = item.productId;
     await item.destroy();
+
+    // Po usunięciu pustej pozycji globalna dostępność może się zmienić
+    try { await recomputeAndNotifyLowStock(productId); } catch (e) { console.warn('lowStock recompute failed:', e?.message); }
+
     res.json({ success: true, data: { message: 'Inventory item deleted successfully' } });
   } catch (err) {
     console.error('Delete inventory item error:', err);
@@ -382,10 +385,6 @@ router.delete('/:id', async (req, res) => {
   }
 });
 
-/* ===========================
-   POST /api/inventory/operations
-   Tworzenie operacji + aktualizacja stanu
-=========================== */
 /* ===========================
    POST /api/inventory/operations
    Tworzenie operacji + aktualizacja stanu
@@ -439,6 +438,9 @@ router.post('/operations', async (req, res) => {
 
     await item.update({ quantity: quantityAfter, lastUpdatedBy: actor });
 
+    // >>> GENERUJ ALERT NISKIEGO STANU (globalny) <<<
+    try { await recomputeAndNotifyLowStock(item.productId); } catch (e) { console.warn('lowStock recompute failed:', e?.message); }
+
     res.status(201).json({
       success: true,
       data: { operation: op, message: 'Inventory operation created successfully' },
@@ -449,6 +451,21 @@ router.post('/operations', async (req, res) => {
   }
 });
 
+/* ===========================
+   (opcjonalnie) Ręczny trigger do testów
+   POST /api/inventory/alerts/recompute { productId }
+=========================== */
+router.post('/alerts/recompute', async (req, res) => {
+  try {
+    const productId = Number(req.body?.productId);
+    if (!productId) return res.status(400).json({ success: false, error: 'productId required' });
+
+    await recomputeAndNotifyLowStock(productId);
+    res.json({ success: true, data: { message: 'Recomputed' } });
+  } catch (e) {
+    console.error('alerts/recompute error:', e);
+    res.status(500).json({ success: false, error: 'Internal server error' });
+  }
+});
 
 module.exports = router;
-

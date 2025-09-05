@@ -3,81 +3,37 @@ const express = require('express');
 const router = express.Router();
 const { sequelize, Notification, Product, User, NotificationState } = require('../models');
 
-// widoczność po roli (z aliasem)
-const roleFilterSql = (alias = 'n') =>
-  `(${alias}."targetRole" IS NULL OR ${alias}."targetRole" = 'all' OR ${alias}."targetRole" = :role)`;
+/* --------------------------------- */
+/* Helpers                           */
+/* --------------------------------- */
 
-// NO-CACHE helper
+// Admin widzi wszystko; inni widzą powiadomienia
+// skierowane konkretnie do nich (userId) LUB po roli (all / ich rola / null).
+const audienceSql = (alias = 'n') => `
+(
+  :isAdmin = TRUE
+  OR ${alias}."userId" = :userId
+  OR ${alias}."targetRole" IS NULL
+  OR ${alias}."targetRole" = 'all'
+  OR ${alias}."targetRole" = :role
+)
+`;
+
 const noCache = (res) => {
   res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
   res.set('Pragma', 'no-cache');
   res.set('Expires', '0');
 };
 
-// ⬇️ SZCZEGÓŁY POWIADOMIENIA (z opcją auto-READ)
-router.get('/:id', async (req, res) => {
-  try {
-    const id = Number(req.params.id);
-    const role = String(req.query.role || 'all');
-    const userId = req.query.userId ? Number(req.query.userId) : null;
-    const markRead = String(req.query.markRead || '') === '1';
-
-    noCache(res);
-
-    // Sprawdź widoczność po roli
-    const [[existsRow]] = await sequelize.query(
-      `SELECT 1 FROM notifications n WHERE n.id = :id AND ${roleFilterSql('n')} LIMIT 1`,
-      { replacements: { id, role } }
-    );
-    if (!existsRow) {
-      return res.status(404).json({ success: false, error: 'Powiadomienie nie istnieje lub brak dostępu' });
-    }
-
-    const notif = await Notification.findByPk(id, {
-      include: [
-        { model: Product, as: 'product', attributes: ['id', 'sku', 'name'] },
-        { model: User, as: 'user', attributes: ['id', 'username', 'firstName', 'lastName'] },
-        ...(userId ? [{
-          model: NotificationState,
-          as: 'states',
-          where: { userId },
-          required: false,
-          attributes: ['isRead', 'readAt'],
-        }] : []),
-      ],
-    });
-    if (!notif) return res.status(404).json({ success: false, error: 'Nie znaleziono' });
-
-    const j = notif.toJSON();
-    const st = Array.isArray(j.states) && j.states[0] ? j.states[0] : null;
-    let isReadForUser = !!(st && st.isRead);
-
-    // Auto-oznacz jako przeczytane po wejściu (opcjonalnie)
-    if (userId && markRead && !isReadForUser) {
-      await NotificationState.upsert({
-        notificationId: id,
-        userId,
-        isRead: true,
-        readAt: new Date(),
-      });
-      isReadForUser = true;
-    }
-
-    delete j.states;
-    j.isReadForUser = isReadForUser;
-
-    res.json({ success: true, data: { notification: j } });
-  } catch (err) {
-    console.error('Get notification details error:', err);
-    res.status(500).json({ success: false, error: 'Internal server error' });
-  }
-});
-
-/** 🔔 Licznik nieprzeczytanych dla usera */
+/* --------------------------------- */
+/* 🔔 Unread counter                  */
+/* --------------------------------- */
+// GET /api/notifications/unread/count
 router.get('/unread/count', async (req, res) => {
   try {
-    const userId = Number(req.query.userId);
+    const userId = req.query.userId ? Number(req.query.userId) : null;
     const role = String(req.query.role || 'all');
+    const isAdmin = (role === 'admin');
     noCache(res);
 
     const [[row]] = await sequelize.query(
@@ -85,15 +41,16 @@ router.get('/unread/count', async (req, res) => {
       SELECT COUNT(*)::int AS count
       FROM notifications n
       WHERE
-        ${roleFilterSql('n')}
+        ${audienceSql('n')}
         AND NOT EXISTS (
-          SELECT 1 FROM notification_states s
+          SELECT 1
+          FROM notification_states s
           WHERE s."notificationId" = n."id"
             AND s."userId" = :userId
             AND s."isRead" = TRUE
         )
       `,
-      { replacements: { userId, role } }
+      { replacements: { userId, role, isAdmin } }
     );
 
     res.json({ success: true, data: { count: row.count } });
@@ -103,7 +60,10 @@ router.get('/unread/count', async (req, res) => {
   }
 });
 
-/** 📄 Lista z filtrami – per-user isRead */
+/* --------------------------------- */
+/* 📄 List (z filtrami, per-user read) */
+/* --------------------------------- */
+// GET /api/notifications
 router.get('/', async (req, res) => {
   try {
     const page = Math.max(1, Number(req.query.page || 1));
@@ -111,6 +71,7 @@ router.get('/', async (req, res) => {
     const offset = (page - 1) * limit;
 
     const role = String(req.query.role || 'all');
+    const isAdmin = (role === 'admin');
     const userId = req.query.userId ? Number(req.query.userId) : null;
     const isReadParam = typeof req.query.isRead === 'string' ? req.query.isRead : null; // 'true'|'false'|null
     const type = req.query.type || null;
@@ -118,8 +79,8 @@ router.get('/', async (req, res) => {
 
     noCache(res);
 
-    const whereParts = [roleFilterSql('n')];
-    const repl = { role };
+    const whereParts = [audienceSql('n')];
+    const repl = { role, userId, isAdmin };
 
     if (type) { whereParts.push(`n."type" = :type`); repl.type = type; }
     if (priority) { whereParts.push(`n."priority" = :priority`); repl.priority = priority; }
@@ -134,7 +95,6 @@ router.get('/', async (req, res) => {
               AND s."isRead" = TRUE
           )
         `);
-        repl.userId = userId;
       } else if (isReadParam === 'false') {
         whereParts.push(`
           NOT EXISTS (
@@ -144,7 +104,6 @@ router.get('/', async (req, res) => {
               AND s."isRead" = TRUE
           )
         `);
-        repl.userId = userId;
       }
     }
 
@@ -157,7 +116,7 @@ router.get('/', async (req, res) => {
     );
     const totalItems = countRow.count;
 
-    // id w danej stronie
+    // page ids
     const [idRows] = await sequelize.query(
       `
       SELECT n.id
@@ -189,7 +148,6 @@ router.get('/', async (req, res) => {
       });
     }
 
-    // plain + isReadForUser
     const rows = notifications.map((n) => {
       const j = n.toJSON();
       const isReadForUser = Array.isArray(j.states) && j.states.length > 0;
@@ -216,7 +174,54 @@ router.get('/', async (req, res) => {
   }
 });
 
-/** ✅ Oznacz jedno jako przeczytane (per-user) */
+/* --------------------------------- */
+/* 🧹 Mark-all read (per-user)       */
+/* --------------------------------- */
+// POST /api/notifications/mark-all-read
+router.post('/mark-all-read', async (req, res) => {
+  try {
+    const userId = Number(req.body.userId || req.query.userId);
+    const role = String(req.body.role || req.query.role || 'all');
+    const isAdmin = (role === 'admin');
+    if (!userId) return res.status(400).json({ success: false, error: 'userId required' });
+
+    const [rows] = await sequelize.query(
+      `
+      SELECT n.id
+      FROM notifications n
+      WHERE
+        ${audienceSql('n')}
+        AND NOT EXISTS (
+          SELECT 1 FROM notification_states s
+          WHERE s."notificationId" = n."id"
+            AND s."userId" = :userId
+            AND s."isRead" = TRUE
+        )
+      `,
+      { replacements: { userId, role, isAdmin } }
+    );
+
+    if (rows.length) {
+      const payload = rows.map(r => ({
+        notificationId: r.id,
+        userId,
+        isRead: true,
+        readAt: new Date(),
+      }));
+      await NotificationState.bulkCreate(payload, { updateOnDuplicate: ['isRead', 'readAt'] });
+    }
+
+    res.json({ success: true, data: { marked: rows.length } });
+  } catch (err) {
+    console.error('Mark all read error:', err);
+    res.status(500).json({ success: false, error: 'Internal server error' });
+  }
+});
+
+/* --------------------------------- */
+/* ✅ Mark single read/unread         */
+/* --------------------------------- */
+// PATCH /api/notifications/:id/read
 router.patch('/:id/read', async (req, res) => {
   try {
     const id = Number(req.params.id);
@@ -237,7 +242,7 @@ router.patch('/:id/read', async (req, res) => {
   }
 });
 
-/** ↩️ Oznacz jedno jako nieprzeczytane (per-user) */
+// PATCH /api/notifications/:id/unread
 router.patch('/:id/unread', async (req, res) => {
   try {
     const id = Number(req.params.id);
@@ -252,42 +257,64 @@ router.patch('/:id/unread', async (req, res) => {
   }
 });
 
-/** 🧹 Oznacz wszystkie jako przeczytane (per-user) */
-router.post('/mark-all-read', async (req, res) => {
+/* --------------------------------- */
+/* 🔎 Details (with per-user state)   */
+/* --------------------------------- */
+// GET /api/notifications/:id
+router.get('/:id', async (req, res) => {
   try {
-    const userId = Number(req.body.userId || req.query.userId);
-    const role = String(req.body.role || req.query.role || 'all');
-    if (!userId) return res.status(400).json({ success: false, error: 'userId required' });
+    const id = Number(req.params.id);
+    const role = String(req.query.role || 'all');
+    const isAdmin = (role === 'admin');
+    const userId = req.query.userId ? Number(req.query.userId) : null;
+    const markRead = String(req.query.markRead || '') === '1';
 
-    const [rows] = await sequelize.query(
-      `
-      SELECT n.id
-      FROM notifications n
-      WHERE
-        ${roleFilterSql('n')}
-        AND NOT EXISTS (
-          SELECT 1 FROM notification_states s
-          WHERE s."notificationId" = n."id"
-            AND s."userId" = :userId
-            AND s."isRead" = TRUE
-        )
-      `,
-      { replacements: { userId, role } }
+    noCache(res);
+
+    // sprawdź audytorium
+    const [[existsRow]] = await sequelize.query(
+      `SELECT 1 FROM notifications n WHERE n.id = :id AND ${audienceSql('n')} LIMIT 1`,
+      { replacements: { id, role, userId, isAdmin } }
     );
+    if (!existsRow) {
+      return res.status(404).json({ success: false, error: 'Powiadomienie nie istnieje lub brak dostępu' });
+    }
 
-    if (rows.length) {
-      const payload = rows.map(r => ({
-        notificationId: r.id,
+    const notif = await Notification.findByPk(id, {
+      include: [
+        { model: Product, as: 'product', attributes: ['id', 'sku', 'name'] },
+        { model: User, as: 'user', attributes: ['id', 'username', 'firstName', 'lastName'] },
+        ...(userId ? [{
+          model: NotificationState,
+          as: 'states',
+          where: { userId },
+          required: false,
+          attributes: ['isRead', 'readAt'],
+        }] : []),
+      ],
+    });
+    if (!notif) return res.status(404).json({ success: false, error: 'Nie znaleziono' });
+
+    const j = notif.toJSON();
+    const st = Array.isArray(j.states) && j.states[0] ? j.states[0] : null;
+    let isReadForUser = !!(st && st.isRead);
+
+    if (userId && markRead && !isReadForUser) {
+      await NotificationState.upsert({
+        notificationId: id,
         userId,
         isRead: true,
         readAt: new Date(),
-      }));
-      await NotificationState.bulkCreate(payload, { updateOnDuplicate: ['isRead', 'readAt'] });
+      });
+      isReadForUser = true;
     }
 
-    res.json({ success: true, data: { marked: rows.length } });
+    delete j.states;
+    j.isReadForUser = isReadForUser;
+
+    res.json({ success: true, data: { notification: j } });
   } catch (err) {
-    console.error('Mark all read error:', err);
+    console.error('Get notification details error:', err);
     res.status(500).json({ success: false, error: 'Internal server error' });
   }
 });
