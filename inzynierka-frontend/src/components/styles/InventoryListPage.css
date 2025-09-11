@@ -1,0 +1,117 @@
+.inventory-page {
+  padding: 2rem;
+  font-family: sans-serif;
+  color: #333;
+}
+
+h1 {
+  margin-bottom: 1rem;
+  font-size: 1.6rem;
+  color: #3b3b3b;
+}
+
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.filters input,
+.filters select,
+.filters button {
+  padding: 6px 10px;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  font-size: 0.9rem;
+}
+
+.filters button {
+  background: #4a90a2;
+  color: #fff;
+  border: none;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+.filters button:hover {
+  background: #3b7c89;
+}
+
+.filters .checkbox-label {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.export-buttons {
+  margin-left: auto;
+  display: flex;
+  gap: 8px;
+}
+
+.table-wrapper {
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.inventory-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.inventory-table th {
+  background: #f0f0f0;
+  text-align: left;
+  padding: 10px;
+  font-weight: 600;
+  color: #444;
+}
+
+.inventory-table td {
+  padding: 10px;
+  border-top: 1px solid #eee;
+}
+
+.inventory-table tr:hover {
+  background: #fafafa;
+}
+
+.product-cell {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+}
+.product-cell .sku {
+  color: #777;
+  font-size: 0.85em;
+}
+
+.inventory-table button,
+.inventory-table a {
+  margin-right: 6px;
+  padding: 4px 8px;
+  border: none;
+  border-radius: 4px;
+  font-size: 0.85rem;
+  text-decoration: none;
+  background: #e0e0e0;
+  color: #333;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.inventory-table button:hover,
+.inventory-table a:hover {
+  background: #d0d0d0;
+}
+
+.delete-btn {
+  background: #b85c5c;
+  color: #fff;
+}
+.delete-btn:hover {
+  background: #a14d4d;
+}

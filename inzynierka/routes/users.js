@@ -2,243 +2,284 @@ const express = require('express');
 const router = express.Router();
 const { User, ActivityLog } = require('../models');
 const bcrypt = require('bcrypt');
+const { Op } = require('sequelize');
 
-// GET /api/users - Get all users
+/* ---------------- Helpers ---------------- */
+
+const requireAdminAuth = async ({ requesterId, currentAdminPassword }) => {
+  if (!requesterId || !currentAdminPassword) {
+    const err = new Error('Deleting a user requires requesterId and currentAdminPassword');
+    err.status = 400;
+    throw err;
+  }
+  const requester = await User.findByPk(Number(requesterId));
+  if (!requester || requester.role !== 'admin') {
+    const err = new Error('Only admins can delete users');
+    err.status = 403;
+    throw err;
+  }
+  const ok = await bcrypt.compare(currentAdminPassword, requester.password);
+  if (!ok) {
+    const err = new Error('Invalid admin password');
+    err.status = 401;
+    throw err;
+  }
+  return requester;
+};
+
+const makeDeletedUsername = (base, id) => {
+  const suffix = `__del_${id}_${Date.now()}`;
+  const val = `${String(base || 'user').slice(0, 50 - suffix.length)}${suffix}`;
+  return val;
+};
+
+const makeDeletedEmail = (id) => {
+  // pozostaje poprawnym adresem i jest unikalny
+  const val = `deleted+${id}.${Date.now()}@example.invalid`;
+  return val.length > 100 ? val.slice(0, 100) : val;
+};
+
+/* ---------------- OPTIONS ---------------- */
+/**
+ * GET /api/users/options?query=...&limit=20
+ * podpowiedzi tylko dla aktywnych
+ */
+router.get('/options', async (req, res) => {
+  try {
+    const query = String(req.query.query || '').trim();
+    const limit = Math.min(Math.max(parseInt(req.query.limit || '20', 10), 1), 50);
+
+    if (query.length < 2) {
+      return res.json({ success: true, data: { options: [] } });
+    }
+
+    const where = {
+      isActive: true,
+      [Op.or]: [
+        { username: { [Op.iLike]: `%${query}%` } },
+        { email: { [Op.iLike]: `%${query}%` } },
+        { firstName: { [Op.iLike]: `%${query}%` } },
+        { lastName: { [Op.iLike]: `%${query}%` } },
+      ],
+    };
+
+    const users = await User.findAll({
+      where,
+      attributes: ['id', 'username', 'email', 'firstName', 'lastName'],
+      order: [['lastName', 'ASC'], ['firstName', 'ASC']],
+      limit,
+    });
+
+    const options = users.map(u => {
+      const fn = u.firstName || '';
+      const ln = u.lastName || '';
+      const base = `${(fn + ' ' + ln).trim() || u.username}`;
+      return { id: u.id, label: `${base} (${u.username})` };
+    });
+
+    return res.json({ success: true, data: { options } });
+  } catch (err) {
+    console.error('Users options error:', err);
+    return res.status(500).json({ success: false, error: 'Internal server error' });
+  }
+});
+
+/* ---------------- LIST ---------------- */
+// GET /api/users
 router.get('/', async (req, res) => {
   try {
-    const { page = 1, limit = 10, role } = req.query;
-    const offset = (page - 1) * limit;
-    
-    const whereClause = {};
-    if (role) whereClause.role = role;
+    const { page = 1, limit = 10, role, includeInactive } = req.query;
+    const offset = (Number(page) - 1) * Number(limit);
+    const where = {};
+    if (role) where.role = role;
+    if (!includeInactive) where.isActive = true; // domyślnie tylko aktywni
 
-    const users = await User.findAndCountAll({
-      where: whereClause,
+    const result = await User.findAndCountAll({
+      where,
       attributes: { exclude: ['password'] },
-      limit: parseInt(limit),
-      offset: parseInt(offset),
+      limit: Number(limit),
+      offset,
       order: [['createdAt', 'DESC']]
     });
 
-    res.json({
+    return res.json({
       success: true,
       data: {
-        users: users.rows,
+        users: result.rows,
         pagination: {
-          currentPage: parseInt(page),
-          totalPages: Math.ceil(users.count / limit),
-          totalItems: users.count,
-          itemsPerPage: parseInt(limit)
+          currentPage: Number(page),
+          totalPages: Math.ceil(result.count / Number(limit)),
+          totalItems: result.count,
+          itemsPerPage: Number(limit)
         }
       }
     });
-
-  } catch (error) {
-    console.error('Get users error:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Internal server error'
-    });
+  } catch (err) {
+    console.error('Get users error:', err);
+    return res.status(500).json({ success: false, error: 'Internal server error' });
   }
 });
 
-// GET /api/users/:id - Get user by ID
+/* ---------------- GET ONE ---------------- */
+// GET /api/users/:id
 router.get('/:id', async (req, res) => {
   try {
-    const { id } = req.params;
-
-    const user = await User.findByPk(id, {
+    const user = await User.findByPk(req.params.id, {
       attributes: { exclude: ['password'] },
-      include: [
-        {
-          model: ActivityLog,
-          as: 'activityLogs',
-          limit: 10,
-          order: [['createdAt', 'DESC']]
-        }
-      ]
+      include: [{ model: ActivityLog, as: 'activityLogs', limit: 10, order: [['createdAt', 'DESC']] }]
     });
-
-    if (!user) {
-      return res.status(404).json({
-        success: false,
-        error: 'User not found'
-      });
-    }
-
-    res.json({
-      success: true,
-      data: { user }
-    });
-
-  } catch (error) {
-    console.error('Get user error:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Internal server error'
-    });
+    if (!user) return res.status(404).json({ success: false, error: 'User not found' });
+    return res.json({ success: true, data: { user } });
+  } catch (err) {
+    console.error('Get user error:', err);
+    return res.status(500).json({ success: false, error: 'Internal server error' });
   }
 });
 
-// POST /api/users - Create new user
+/* ---------------- CREATE ---------------- */
+// POST /api/users
 router.post('/', async (req, res) => {
   try {
     const { username, email, password, firstName, lastName, role = 'worker' } = req.body;
 
     if (!username || !email || !password || !firstName || !lastName) {
-      return res.status(400).json({
-        success: false,
-        error: 'All fields are required'
-      });
+      return res.status(400).json({ success: false, error: 'All fields are required' });
     }
 
-    // Check if user already exists
-    const existingUser = await User.findOne({
-      where: {
-        [require('sequelize').Op.or]: [{ username }, { email }]
-      }
-    });
-
-    if (existingUser) {
-      return res.status(400).json({
-        success: false,
-        error: 'Username or email already exists'
-      });
+    const existing = await User.findOne({ where: { [Op.or]: [{ username }, { email }] } });
+    if (existing) {
+      return res.status(400).json({ success: false, error: 'Username or email already exists' });
     }
 
-    // Hash password
-    const hashedPassword = await bcrypt.hash(password, 10);
+    const hashed = await bcrypt.hash(password, 10);
+    const user = await User.create({ username, email, password: hashed, firstName, lastName, role });
 
-    // Create user
-    const user = await User.create({
-      username,
-      email,
-      password: hashedPassword,
-      firstName,
-      lastName,
-      role
-    });
-
-    const { password: _, ...userData } = user.toJSON();
-
-    res.status(201).json({
-      success: true,
-      data: {
-        user: userData,
-        message: 'User created successfully'
-      }
-    });
-
-  } catch (error) {
-    console.error('Create user error:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Internal server error'
-    });
+    const { password: _pw, ...userData } = user.toJSON();
+    return res.status(201).json({ success: true, data: { user: userData, message: 'User created successfully' } });
+  } catch (err) {
+    console.error('Create user error:', err);
+    return res.status(500).json({ success: false, error: 'Internal server error' });
   }
 });
 
-// PUT /api/users/:id - Update user
+/* ---------------- UPDATE ---------------- */
+// PUT /api/users/:id
 router.put('/:id', async (req, res) => {
   try {
-    const { id } = req.params;
-    const { username, email, firstName, lastName, role, password } = req.body;
+    const targetId = Number(req.params.id);
+    const {
+      username, email, firstName, lastName, role, password,
+      requesterId, currentPassword, currentAdminPassword
+    } = req.body;
 
-    const user = await User.findByPk(id);
-    if (!user) {
-      return res.status(404).json({
-        success: false,
-        error: 'User not found'
-      });
-    }
+    const user = await User.findByPk(targetId);
+    if (!user) return res.status(404).json({ success: false, error: 'User not found' });
 
-    // Check if username/email already exists (excluding current user)
     if (username || email) {
-      const existingUser = await User.findOne({
+      const existing = await User.findOne({
         where: {
-          [require('sequelize').Op.and]: [
-            {
-              [require('sequelize').Op.or]: [
-                username ? { username } : null,
-                email ? { email } : null
-              ].filter(Boolean)
-            },
-            { id: { [require('sequelize').Op.ne]: id } }
+          [Op.and]: [
+            { [Op.or]: [username ? { username } : null, email ? { email } : null].filter(Boolean) },
+            { id: { [Op.ne]: targetId } }
           ]
         }
       });
-
-      if (existingUser) {
-        return res.status(400).json({
-          success: false,
-          error: 'Username or email already exists'
-        });
-      }
+      if (existing) return res.status(400).json({ success: false, error: 'Username or email already exists' });
     }
 
-    // Prepare update data
-    const updateData = {};
-    if (username) updateData.username = username;
-    if (email) updateData.email = email;
-    if (firstName) updateData.firstName = firstName;
-    if (lastName) updateData.lastName = lastName;
-    if (role) updateData.role = role;
+    const update = {};
+    if (username) update.username = username;
+    if (email) update.email = email;
+    if (firstName) update.firstName = firstName;
+    if (lastName) update.lastName = lastName;
+    if (role) update.role = role;
 
-    // Hash password if provided
-    if (password) {
-      updateData.password = await bcrypt.hash(password, 10);
+    if (typeof password === 'string') {
+      if (password.trim().length < 8) {
+        return res.status(400).json({ success: false, error: 'New password must be at least 8 characters' });
+      }
+      if (!requesterId) {
+        return res.status(400).json({ success: false, error: 'requesterId is required to change password' });
+      }
+
+      const requester = await User.findByPk(Number(requesterId));
+      if (!requester) return res.status(403).json({ success: false, error: 'Requester not found' });
+
+      const selfChange = requester.id === user.id;
+      if (selfChange) {
+        let authorized = false;
+        if (currentPassword) {
+          const ok = await bcrypt.compare(currentPassword, user.password);
+          if (ok) authorized = true;
+        }
+        if (!authorized && requester.role === 'admin' && currentAdminPassword) {
+          const okAdmin = await bcrypt.compare(currentAdminPassword, requester.password);
+          if (okAdmin) authorized = true;
+        }
+        if (!authorized) {
+          return res.status(401).json({ success: false, error: 'Invalid current password' });
+        }
+      } else {
+        if (requester.role !== 'admin') {
+          return res.status(403).json({ success: false, error: 'Only admins can change other users passwords' });
+        }
+        if (!currentAdminPassword) {
+          return res.status(400).json({ success: false, error: 'currentAdminPassword is required to set password for another user' });
+        }
+        const okAdmin = await bcrypt.compare(currentAdminPassword, requester.password);
+        if (!okAdmin) {
+          return res.status(401).json({ success: false, error: 'Invalid admin password' });
+        }
+      }
+
+      update.password = await bcrypt.hash(password, 10);
     }
 
-    await user.update(updateData);
-
-    const { password: _, ...userData } = user.toJSON();
-
-    res.json({
-      success: true,
-      data: {
-        user: userData,
-        message: 'User updated successfully'
-      }
-    });
-
-  } catch (error) {
-    console.error('Update user error:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Internal server error'
-    });
+    await user.update(update);
+    const { password: _pw, ...userData } = user.toJSON();
+    return res.json({ success: true, data: { user: userData, message: 'User updated successfully' } });
+  } catch (err) {
+    console.error('Update user error:', err);
+    return res.status(500).json({ success: false, error: 'Internal server error' });
   }
 });
 
-// DELETE /api/users/:id - Delete user (HARD DELETE)
+/* ---------------- DELETE (soft) ---------------- */
+// DELETE /api/users/:id
 router.delete('/:id', async (req, res) => {
   try {
-    const { id } = req.params;
+    const targetId = Number(req.params.id);
+    const { requesterId, currentAdminPassword } = req.body || {};
 
-    const user = await User.findByPk(id);
-    if (!user) {
-      return res.status(404).json({
-        success: false,
-        error: 'User not found'
-      });
+    // zawsze wymagamy hasła admina
+    await requireAdminAuth({ requesterId, currentAdminPassword });
+
+    const userToDelete = await User.findByPk(targetId);
+    if (!userToDelete) return res.status(404).json({ success: false, error: 'User not found' });
+
+    // nie usuwaj ostatniego admina
+    if (userToDelete.role === 'admin') {
+      const adminsCount = await User.count({ where: { role: 'admin', isActive: true } });
+      if (adminsCount <= 1) {
+        return res.status(409).json({ success: false, error: 'Cannot delete the last admin user' });
+      }
     }
 
-    // Hard delete - fizyczne usunięcie użytkownika
-    await user.destroy();
+    // soft delete + zwolnienie unikalności
+    const nextUsername = makeDeletedUsername(userToDelete.username, userToDelete.id);
+    const nextEmail = makeDeletedEmail(userToDelete.id);
 
-    res.json({
-      success: true,
-      data: {
-        message: 'User deleted successfully'
-      }
+    await userToDelete.update({
+      isActive: false,
+      username: nextUsername,
+      email: nextEmail,
     });
 
-  } catch (error) {
-    console.error('Delete user error:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Internal server error'
-    });
+    return res.json({ success: true, data: { message: 'User deleted (deactivated) successfully' } });
+  } catch (err) {
+    console.error('Delete user error:', err);
+    const status = err.status || 500;
+    return res.status(status).json({ success: false, error: err.message || 'Internal server error' });
   }
 });
 

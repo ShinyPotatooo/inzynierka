@@ -1,0 +1,9 @@
+{
+  "watch": ["server.js", "routes", "models", "config"],
+  "ext": "js,json",
+  "ignore": ["**/*.test.js", "node_modules"],
+  "exec": "node -r dotenv/config server.js",
+  "signal": "SIGINT",
+  "delay": "300ms",
+  "env": { "NODE_ENV": "development" }
+}

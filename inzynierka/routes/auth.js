@@ -2,135 +2,135 @@ const express = require('express');
 const router = express.Router();
 const { User } = require('../models');
 const bcrypt = require('bcrypt');
+const { Op } = require('sequelize');
+const crypto = require('crypto');
+const transporter = require('../utils/mailer');
+const jwt = require('jsonwebtoken');
 
-// POST /api/auth/login
+
+
+/**
+ * POST /api/auth/login
+ * Logowanie po identifier (email LUB username) + password
+ */
 router.post('/login', async (req, res) => {
   try {
-    const { username, password } = req.body;
+    const { identifier, password } = req.body;
 
-    if (!username || !password) {
+    if (!identifier || !password) {
       return res.status(400).json({
         success: false,
-        error: 'Username and password are required'
+        error: 'Identifier (email lub nazwa) i hasło są wymagane'
       });
     }
 
-    const user = await User.findOne({ 
-      where: { username },
-      attributes: ['id', 'username', 'email', 'firstName', 'lastName', 'role', 'password', 'isActive']
+    const user = await User.findOne({
+      where: {
+        [Op.or]: [
+          { username: identifier },
+          { email: identifier.toLowerCase() }
+        ]
+      },
+      attributes: [
+        'id',
+        'username',
+        'email',
+        'firstName',
+        'lastName',
+        'role',
+        'password',
+        'isActive'
+      ]
     });
 
     if (!user) {
-      return res.status(401).json({
-        success: false,
-        error: 'Invalid credentials'
-      });
+      return res.status(401).json({ success: false, error: 'Invalid credentials' });
     }
 
     if (!user.isActive) {
-      return res.status(401).json({
-        success: false,
-        error: 'Account is deactivated'
-      });
+      return res.status(401).json({ success: false, error: 'Account is deactivated' });
     }
 
-    const isValidPassword = await bcrypt.compare(password, user.password);
-    if (!isValidPassword) {
-      return res.status(401).json({
-        success: false,
-        error: 'Invalid credentials'
-      });
+    const ok = await bcrypt.compare(password, user.password);
+    if (!ok) {
+      return res.status(401).json({ success: false, error: 'Invalid credentials' });
     }
 
-    // Update last login
     await user.update({ lastLoginAt: new Date() });
 
-    // For now, return user data without JWT
-    const { password: _, ...userData } = user.toJSON();
-    
-    res.json({
+        const { password: _pw, ...userData } = user.toJSON();
+
+    // 🔑  JWT
+    const token = jwt.sign(
+      { id: user.id, role: user.role },
+      process.env.JWT_SECRET || 'supersecretkey',
+      { expiresIn: '1h' } // token ważny 1h
+    );
+
+    return res.json({
       success: true,
       data: {
         user: userData,
-        message: 'Login successful (JWT will be added later)'
+        token
       }
     });
 
-  } catch (error) {
-    console.error('Login error:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Internal server error'
-    });
+  } catch (err) {
+    console.error('Login error:', err);
+    return res.status(500).json({ success: false, error: 'Internal server error' });
   }
 });
 
-// POST /api/auth/register
+/**
+ * POST /api/auth/register
+ */
 router.post('/register', async (req, res) => {
   try {
     const { username, email, password, firstName, lastName, role = 'worker' } = req.body;
 
     if (!username || !email || !password || !firstName || !lastName) {
-      return res.status(400).json({
-        success: false,
-        error: 'All fields are required'
-      });
+      return res.status(400).json({ success: false, error: 'All fields are required' });
     }
 
-    // Check if user already exists
-    const existingUser = await User.findOne({
-      where: {
-        [require('sequelize').Op.or]: [{ username }, { email }]
-      }
+    const existing = await User.findOne({
+      where: { [Op.or]: [{ username }, { email }] }
     });
 
-    if (existingUser) {
-      return res.status(400).json({
-        success: false,
-        error: 'Username or email already exists'
-      });
+    if (existing) {
+      return res.status(400).json({ success: false, error: 'Username or email already exists' });
     }
 
-    // Hash password
-    const hashedPassword = await bcrypt.hash(password, 10);
-
-    // Create user
+    const hashed = await bcrypt.hash(password, 10);
     const user = await User.create({
       username,
       email,
-      password: hashedPassword,
+      password: hashed,
       firstName,
       lastName,
       role,
       isActive: true
     });
 
-    const { password: _, ...userData } = user.toJSON();
-
-    res.status(201).json({
+    const { password: _pw, ...userData } = user.toJSON();
+    return res.status(201).json({
       success: true,
-      data: {
-        user: userData,
-        message: 'User registered successfully'
-      }
+      data: { user: userData, message: 'User registered successfully' }
     });
-
-  } catch (error) {
-    console.error('Registration error:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Internal server error'
-    });
+  } catch (err) {
+    console.error('Registration error:', err);
+    return res.status(500).json({ success: false, error: 'Internal server error' });
   }
 });
 
-// GET /api/auth/me (placeholder for when JWT is added)
-router.get('/me', (req, res) => {
-  res.json({
+/**
+ * GET /api/auth/me (placeholder pod JWT)
+ */
+router.get('/me', (_req, res) => {
+  return res.json({
     success: false,
     error: 'JWT authentication not implemented yet',
     message: 'This endpoint will return current user data when JWT is added'
   });
 });
 
-module.exports = router; 
+module.exports = router;

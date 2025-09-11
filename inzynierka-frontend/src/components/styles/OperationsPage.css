@@ -1,0 +1,114 @@
+.operations-page {
+  padding: 2rem;
+  font-family: sans-serif;
+  color: #333;
+}
+
+.operations-page h1 {
+  margin-bottom: 1rem;
+  font-size: 1.6rem;
+  color: #3b3b3b;
+}
+
+/* GRID FILTRÓW */
+.filters-grid {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) 160px minmax(220px, 1fr) repeat(2, 160px) 140px 120px;
+  gap: 8px;
+  margin: 12px 0;
+}
+
+.filters-grid input,
+.filters-grid select,
+.filters-grid button {
+  padding: 6px 8px;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  font-size: 0.9rem;
+}
+
+.filters-grid button {
+  background: #4a90a2;
+  color: #fff;
+  border: none;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+.filters-grid button:hover {
+  background: #3b7c89;
+}
+
+/* PASEK NAD TABELĄ */
+.actions-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.results-info {
+  color: #666;
+  font-size: 0.9rem;
+}
+
+/* TABELA */
+.table-wrapper {
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  overflow-x: auto;
+}
+
+.operations-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.operations-table th {
+  background: #f5f5f5;
+  text-align: left;
+  padding: 10px 8px;
+  font-weight: 600;
+  color: #444;
+}
+
+.operations-table td {
+  padding: 8px;
+  border-top: 1px solid #eee;
+}
+
+.operations-table tr:hover {
+  background: #fafafa;
+}
+
+.empty-row {
+  text-align: center;
+  padding: 16px;
+  color: #666;
+}
+
+/* PAGINACJA */
+.pagination {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 12px;
+}
+
+.pagination button {
+  padding: 4px 8px;
+  border: 1px solid #ccc;
+  background: #f0f0f0;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.pagination button:hover:not(:disabled) {
+  background: #e0e0e0;
+}
+
+.pagination button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}

@@ -1,0 +1,245 @@
+// src/pages/InventoryItemDetailsPage.jsx
+import React, { useContext, useEffect, useState } from 'react';
+import { useParams, Link } from 'react-router-dom';
+import { toast } from 'react-toastify';
+import { AuthContext } from '../context/AuthContext';
+import { getInventoryItem, updateInventoryItem } from '../services/inventory';
+
+function toDateInputValue(d) {
+  if (!d) return '';
+  const dt = new Date(d);
+  const yyyy = dt.getFullYear();
+  const mm = String(dt.getMonth() + 1).padStart(2, '0');
+  const dd = String(dt.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+export default function InventoryItemDetailsPage() {
+  const { id } = useParams();
+  const { user } = useContext(AuthContext);
+  const userId = user?.id ?? 1;
+
+  const [item, setItem] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  const [edit, setEdit] = useState(false);
+  const [draft, setDraft] = useState({});
+
+  const load = async () => {
+    try {
+      setLoading(true);
+      const data = await getInventoryItem(id);
+      setItem(data);
+      setDraft({
+        location: data.location || '',
+        batchNumber: data.batchNumber || '',
+        purchaseOrderNumber: data.purchaseOrderNumber || '',
+        supplier: data.supplier || '',
+        condition: data.condition || 'new',
+        reservedQuantity: data.reservedQuantity ?? 0,
+        expiryDate: toDateInputValue(data.expiryDate),
+        manufacturingDate: toDateInputValue(data.manufacturingDate),
+        notes: data.notes || '',
+      });
+    } catch (e) {
+      console.error(e);
+      toast.error(e.message || 'Błąd pobierania pozycji');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id]);
+
+  const changeDraft = (k, v) => setDraft((d) => ({ ...d, [k]: v }));
+
+  const save = async () => {
+    try {
+      const payload = {
+        ...draft,
+        reservedQuantity: draft.reservedQuantity === '' ? 0 : parseInt(draft.reservedQuantity, 10),
+        expiryDate: draft.expiryDate || null,
+        manufacturingDate: draft.manufacturingDate || null,
+        lastUpdatedBy: userId,
+      };
+      const updated = await updateInventoryItem(item.id, payload);
+      setItem((prev) => ({ ...prev, ...updated }));
+      toast.success('Zapisano zmiany');
+      setEdit(false);
+      await load();
+    } catch (e) {
+      console.error(e);
+      toast.error(e.message || 'Błąd zapisu');
+    }
+  };
+
+  if (loading) return <div style={{ padding: '2rem' }}>Ładowanie…</div>;
+  if (!item) return <div style={{ padding: '2rem' }}>Nie znaleziono pozycji</div>;
+
+  const available = (item.quantity || 0) - (item.reservedQuantity || 0);
+
+  return (
+    <div style={{ padding: '2rem', maxWidth: 980 }}>
+      <div style={{ marginBottom: 12 }}>
+        <Link to="/inventory">← wróć do magazynu</Link>
+      </div>
+
+      <h1>Pozycja #{item.id}</h1>
+      <p>
+        <strong>Produkt:</strong> {item.product?.name}{' '}
+        {item.product?.sku ? `(${item.product.sku})` : ''}
+      </p>
+
+      <div style={{ margin: '16px 0', padding: 16, border: '1px solid #eee', borderRadius: 8 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <div>
+            <label>Lokalizacja</label>
+            {edit ? (
+              <input value={draft.location} onChange={(e) => changeDraft('location', e.target.value)} />
+            ) : (
+              <div>{item.location || '—'}</div>
+            )}
+          </div>
+
+          <div>
+            <label>Stan</label>
+            {edit ? (
+              <select
+                value={draft.condition}
+                onChange={(e) => changeDraft('condition', e.target.value)}
+              >
+                <option value="new">Nowy</option>
+                <option value="good">Dobry</option>
+                <option value="fair">Umiarkowany</option>
+                <option value="damaged">Uszkodzony</option>
+                <option value="expired">Przeterminowany</option>
+              </select>
+            ) : (
+              <div>{item.condition || '—'}</div>
+            )}
+          </div>
+
+          <div>
+            <label>Ilość</label>
+            <div>{item.quantity}</div>
+          </div>
+
+          <div>
+            <label>Zarezerwowana</label>
+            {edit ? (
+              <input
+                type="number"
+                min={0}
+                step={1}
+                value={draft.reservedQuantity}
+                onChange={(e) => changeDraft('reservedQuantity', e.target.value)}
+              />
+            ) : (
+              <div>{item.reservedQuantity}</div>
+            )}
+          </div>
+
+          <div>
+            <label>Dostępna</label>
+            <div>{available}</div>
+          </div>
+
+          <div>
+            <label>Batch</label>
+            {edit ? (
+              <input
+                value={draft.batchNumber}
+                onChange={(e) => changeDraft('batchNumber', e.target.value)}
+              />
+            ) : (
+              <div>{item.batchNumber || '—'}</div>
+            )}
+          </div>
+
+          <div>
+            <label>Nr zamówienia (PO)</label>
+            {edit ? (
+              <input
+                value={draft.purchaseOrderNumber}
+                onChange={(e) => changeDraft('purchaseOrderNumber', e.target.value)}
+              />
+            ) : (
+              <div>{item.purchaseOrderNumber || '—'}</div>
+            )}
+          </div>
+
+          <div>
+            <label>Dostawca</label>
+            {edit ? (
+              <input value={draft.supplier} onChange={(e) => changeDraft('supplier', e.target.value)} />
+            ) : (
+              <div>{item.supplier || '—'}</div>
+            )}
+          </div>
+
+          <div>
+            <label>Data produkcji</label>
+            {edit ? (
+              <input
+                type="date"
+                value={draft.manufacturingDate}
+                onChange={(e) => changeDraft('manufacturingDate', e.target.value)}
+              />
+            ) : (
+              <div>{item.manufacturingDate ? new Date(item.manufacturingDate).toLocaleDateString() : '—'}</div>
+            )}
+          </div>
+
+          <div>
+            <label>Data ważności</label>
+            {edit ? (
+              <input
+                type="date"
+                value={draft.expiryDate}
+                onChange={(e) => changeDraft('expiryDate', e.target.value)}
+              />
+            ) : (
+              <div>{item.expiryDate ? new Date(item.expiryDate).toLocaleDateString() : '—'}</div>
+            )}
+          </div>
+
+          <div style={{ gridColumn: '1 / -1' }}>
+            <label>Notatki</label>
+            {edit ? (
+              <textarea
+                rows={4}
+                value={draft.notes}
+                onChange={(e) => changeDraft('notes', e.target.value)}
+                style={{ width: '100%' }}
+              />
+            ) : (
+              <div style={{ whiteSpace: 'pre-wrap' }}>{item.notes || '—'}</div>
+            )}
+          </div>
+        </div>
+
+        <div style={{ marginTop: 12 }}>
+          {edit ? (
+            <>
+              <button onClick={save} style={{ marginRight: 8 }}>
+                Zapisz
+              </button>
+              <button onClick={() => setEdit(false)}>Anuluj</button>
+            </>
+          ) : (
+            <button onClick={() => setEdit(true)}>Edytuj szczegóły</button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+
+
+
+
