@@ -1,4 +1,3 @@
-// src/pages/InventoryItemDetailsPage.jsx
 import React, { useContext, useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { toast } from 'react-toastify';
@@ -36,6 +35,7 @@ export default function InventoryItemDetailsPage() {
         purchaseOrderNumber: data.purchaseOrderNumber || '',
         supplier: data.supplier || '',
         condition: data.condition || 'new',
+        flowStatus: data.flowStatus || 'available', // <— NOWE
         reservedQuantity: data.reservedQuantity ?? 0,
         expiryDate: toDateInputValue(data.expiryDate),
         manufacturingDate: toDateInputValue(data.manufacturingDate),
@@ -81,6 +81,12 @@ export default function InventoryItemDetailsPage() {
 
   const available = (item.quantity || 0) - (item.reservedQuantity || 0);
 
+  const statusLabel = (v) =>
+    v === 'in_transit' ? 'W tranzycie'
+    : v === 'damaged' ? 'Uszkodzone'
+    : v === 'reserved' ? 'Zarezerwowane'
+    : 'Dostępne';
+
   return (
     <div style={{ padding: '2rem', maxWidth: 980 }}>
       <div style={{ marginBottom: 12 }}>
@@ -105,7 +111,7 @@ export default function InventoryItemDetailsPage() {
           </div>
 
           <div>
-            <label>Stan</label>
+            <label>Stan techniczny</label>
             {edit ? (
               <select
                 value={draft.condition}
@@ -119,6 +125,23 @@ export default function InventoryItemDetailsPage() {
               </select>
             ) : (
               <div>{item.condition || '—'}</div>
+            )}
+          </div>
+
+          <div>
+            <label>Status (przepływ)</label>
+            {edit ? (
+              <select
+                value={draft.flowStatus}
+                onChange={(e) => changeDraft('flowStatus', e.target.value)}
+              >
+                <option value="available">Dostępne</option>
+                <option value="in_transit">W tranzycie</option>
+                <option value="damaged">Uszkodzone</option>
+                <option value="reserved">Zarezerwowane</option>
+              </select>
+            ) : (
+              <div>{statusLabel(item.flowStatus)}</div>
             )}
           </div>
 
@@ -237,9 +260,3 @@ export default function InventoryItemDetailsPage() {
     </div>
   );
 }
-
-
-
-
-
-

@@ -31,6 +31,7 @@ export default function InventoryItemFormPage() {
   const [quantity, setQuantity] = useState('');
   const [reservedQuantity, setReservedQuantity] = useState('');
   const [condition, setCondition] = useState('new');
+  const [flowStatus, setFlowStatus] = useState('available'); // <— NOWE
   const [supplier, setSupplier] = useState('');
   const [batchNumber, setBatchNumber] = useState('');
   const [purchaseOrderNumber, setPurchaseOrderNumber] = useState('');
@@ -40,29 +41,22 @@ export default function InventoryItemFormPage() {
 
   const delayer = useRef(null);
 
-  /** Lokalne dopasowanie (bez dodatkowych requestów) – STABILNE */
   const tryLocal = useCallback((value, list = []) => {
     const n = normalize(value);
-
-    // exact match całej etykiety
     const exact = list.find(o => normalize(o.label) === n);
     if (exact) return exact.id;
 
-    // po SKU w nawiasie
     const sku = extractSku(value);
     if (sku) {
       const bySku = list.find(o => normalize(o.label).endsWith(`(${normalize(sku)})`));
       if (bySku) return bySku.id;
     }
-
-    // jedyny kandydat „zawiera”
     const fuzzy = list.filter(o => normalize(o.label).includes(n));
     if (fuzzy.length === 1) return fuzzy[0].id;
 
     return null;
-  }, []); // <- brak zależności, funkcja nie zmienia referencji
+  }, []);
 
-  /** 1) Ładowanie propozycji (po wpisie) */
   useEffect(() => {
     const q = productQuery.trim();
     if (delayer.current) clearTimeout(delayer.current);
@@ -76,13 +70,10 @@ export default function InventoryItemFormPage() {
     delayer.current = setTimeout(async () => {
       try {
         setFetching(true);
-        // preferuj wyszukiwanie po SKU jeśli jest w nawiasie
         const sku = extractSku(q);
         const search = sku || labelNamePart(q) || q;
-        const list = await getProductOptions(search, 20); // [{id,label}]
+        const list = await getProductOptions(search, 20);
         setOptions(list || []);
-
-        // spróbuj od razu trafić na podstawie listy z fetchu
         const local = tryLocal(q, list || []);
         setProductId(local);
       } catch (e) {
@@ -95,22 +86,14 @@ export default function InventoryItemFormPage() {
     }, DEBOUNCE_MS);
 
     return () => clearTimeout(delayer.current);
-  }, [productQuery, tryLocal]); // <- zależność od tryLocal OK, bo jest stabilny ([])
+  }, [productQuery, tryLocal]);
 
-  /** Ostatnia próba na blur: jeżeli brak ID, spróbuj SKU albo jedynego kandydata */
   const finalizeProductChoice = async () => {
-    if (productId) return; // już mamy
+    if (productId) return;
     const q = productQuery.trim();
     if (q.length < 2) return;
-
-    // najpierw jeszcze raz lokalnie (po bieżących options)
     let chosen = tryLocal(q, options);
-    if (chosen) {
-      setProductId(chosen);
-      return;
-    }
-
-    // fallback — spróbuj doczytać opcje po samej nazwie
+    if (chosen) { setProductId(chosen); return; }
     try {
       setFetching(true);
       const nameOnly = labelNamePart(q) || q;
@@ -125,33 +108,20 @@ export default function InventoryItemFormPage() {
     }
   };
 
-  /** Każda zmiana tekstu od razu próbuje sparować z lokalnymi opcjami */
   const onProductChange = (val) => {
     setProductQuery(val);
     const local = tryLocal(val, options);
     setProductId(local);
   };
 
-  /** SUBMIT */
   const onSubmit = async (e) => {
     e.preventDefault();
-
-    // dopnij wybór z listy (na wypadek Enter bez blur)
     if (!productId) await finalizeProductChoice();
 
-    if (!productId) {
-      toast.warning('Wybierz produkt z listy');
-      return;
-    }
-    if (!location.trim()) {
-      toast.error('Lokalizacja jest wymagana');
-      return;
-    }
+    if (!productId) return toast.warning('Wybierz produkt z listy');
+    if (!location.trim()) return toast.error('Lokalizacja jest wymagana');
     const qty = Number(quantity);
-    if (!qty || qty <= 0) {
-      toast.error('Ilość musi być większa od zera');
-      return;
-    }
+    if (!qty || qty <= 0) return toast.error('Ilość musi być większa od zera');
 
     try {
       const payload = {
@@ -160,6 +130,7 @@ export default function InventoryItemFormPage() {
         quantity: qty,
         reservedQuantity: reservedQuantity ? Number(reservedQuantity) : 0,
         condition,
+        flowStatus, // <— NOWE
         supplier: supplier || undefined,
         batchNumber: batchNumber || undefined,
         purchaseOrderNumber: purchaseOrderNumber || undefined,
@@ -229,13 +200,23 @@ export default function InventoryItemFormPage() {
           </div>
 
           <div className="field">
-            <label>Stan</label>
+            <label>Stan techniczny</label>
             <select value={condition} onChange={(e) => setCondition(e.target.value)}>
               <option value="new">Nowy</option>
               <option value="good">Dobry</option>
               <option value="fair">Umiarkowany</option>
               <option value="damaged">Uszkodzony</option>
               <option value="expired">Przeterminowany</option>
+            </select>
+          </div>
+
+          <div className="field">
+            <label>Status (przepływ)</label>
+            <select value={flowStatus} onChange={(e) => setFlowStatus(e.target.value)}>
+              <option value="available">Dostępne</option>
+              <option value="in_transit">W tranzycie</option>
+              <option value="damaged">Uszkodzone</option>
+              <option value="reserved">Zarezerwowane</option>
             </select>
           </div>
 
@@ -321,8 +302,3 @@ export default function InventoryItemFormPage() {
     </div>
   );
 }
-
-
-
-
-

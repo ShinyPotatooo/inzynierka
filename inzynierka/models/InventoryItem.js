@@ -38,6 +38,14 @@ module.exports = (sequelize) => {
         return this.quantity - this.reservedQuantity;
       }
     },
+
+    /* === NOWE: status przepływu pozycji === */
+    flowStatus: {
+      type: DataTypes.ENUM('available', 'in_transit', 'damaged', 'reserved'),
+      allowNull: false,
+      defaultValue: 'available'
+    },
+
     batchNumber: {
       type: DataTypes.STRING(50),
       allowNull: true
@@ -91,6 +99,7 @@ module.exports = (sequelize) => {
       { fields: ['batchNumber'] },
       { fields: ['expiryDate'] },
       { fields: ['condition'] },
+      { fields: ['flowStatus'] },   // <— indeks po statusie przepływu
       { fields: ['lastUpdatedBy'] }
     ]
   });
@@ -114,15 +123,7 @@ module.exports = (sequelize) => {
 
   /** ------------------------------
    *  HOOKI: automatyczny alert low-stock
-   *  ------------------------------
-   *  Zasada:
-   *   - po każdej zmianie/utworzeniu/usunięciu pozycji przeliczamy dostępność
-   *     dla danego produktu: SUM(qty) - SUM(reserved).
-   *   - jeśli available < reorderPoint produktu → tworzymy (lub aktualizujemy)
-   *     powiadomienie typu "low_stock" dla managerów.
-   *   - jeśli istnieje już „otwarte” (isRead=false) powiadomienie, nie duplikujemy
-   *     go — tylko odświeżamy metadane.
-   */
+   *  ------------------------------ */
   async function ensureLowStockAlertFor(item) {
     try {
       const { Product, InventoryItem, Notification } = sequelize.models;
@@ -131,7 +132,6 @@ module.exports = (sequelize) => {
       const product = await Product.findByPk(item.productId);
       if (!product) return;
 
-      // Suma stanów dla produktu (z pominięciem VIRTUAL-i)
       const rows = await InventoryItem.findAll({
         where: { productId: item.productId },
         attributes: ['quantity', 'reservedQuantity']
@@ -142,10 +142,9 @@ module.exports = (sequelize) => {
       const available = totalQty - totalRes;
 
       const reorder = Number(product.reorderPoint ?? 0);
-      if (!Number.isFinite(reorder) || reorder <= 0) return; // nie ustawiono progu → brak alertu
+      if (!Number.isFinite(reorder) || reorder <= 0) return;
 
       if (available < reorder) {
-        // Nie powielaj powiadomień: szukamy najnowszego nieprzeczytanego low_stock dla produktu
         const existing = await Notification.findOne({
           where: { type: 'low_stock', productId: product.id, isRead: false },
           order: [['createdAt', 'DESC']]
@@ -177,7 +176,6 @@ module.exports = (sequelize) => {
             }
           });
         } else {
-          // Odśwież metadane (żeby badge nie puchł od duplikatów)
           try {
             existing.title = title;
             existing.message = message;
@@ -193,21 +191,14 @@ module.exports = (sequelize) => {
             await existing.save();
           } catch (_) {}
         }
-
-        // poinformuj UI, że coś się zmieniło (jeśli używasz ws / broadcastu – tu zostawiamy no-op)
-      } else {
-        // Gdy wróci powyżej progu – nic nie robimy (zachowujemy historię alertów).
-        // Można by tu ewentualnie automatycznie „zamykać” stare alerty (isRead=true).
       }
     } catch (e) {
-      // Nie blokuj transakcji w razie błędu alertu.
       if (process.env.NODE_ENV !== 'production') {
         console.error('[low-stock hook] error:', e?.message || e);
       }
     }
   }
 
-  // Reaguj na wszystkie zmiany pozycji
   InventoryItem.addHook('afterCreate', ensureLowStockAlertFor);
   InventoryItem.addHook('afterUpdate', ensureLowStockAlertFor);
   InventoryItem.addHook('afterDestroy', ensureLowStockAlertFor);

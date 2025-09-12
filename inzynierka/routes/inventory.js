@@ -1,19 +1,17 @@
-// routes/inventory.js
 const express = require('express');
 const router = express.Router();
 const { Op, literal } = require('sequelize');
 const { InventoryItem, InventoryOperation, Product, User } = require('../models');
-const { recomputeAndNotifyLowStock } = require('../utils/lowStock'); // <— DODANE
+const { recomputeAndNotifyLowStock } = require('../utils/lowStock');
 
 /* ===========================
    Helpers
 =========================== */
 function todayIsoDate() {
   const d = new Date();
-  return d.toISOString().slice(0, 10); // YYYY-MM-DD
+  return d.toISOString().slice(0, 10);
 }
 
-// BATCH-YYYY-<seq per product>
 async function generateBatchNumber(InventoryItemModel, productId) {
   const year = new Date().getFullYear();
   const count = await InventoryItemModel.count({ where: { productId } });
@@ -21,7 +19,6 @@ async function generateBatchNumber(InventoryItemModel, productId) {
   return `BATCH-${year}-${seq}`;
 }
 
-// PO-YYYY-<global seq>
 async function generatePurchaseOrderNumber(InventoryItemModel) {
   const year = new Date().getFullYear();
   const total = await InventoryItemModel.count();
@@ -42,6 +39,7 @@ router.get('/', async (req, res) => {
       condition,
       supplier,
       lowStock = false,
+      flowStatus, // <— NOWY filtr
     } = req.query;
 
     const offset = (Number(page) - 1) * Number(limit);
@@ -51,8 +49,8 @@ router.get('/', async (req, res) => {
     if (location) where.location = { [Op.iLike]: `%${location}%` };
     if (condition) where.condition = condition;
     if (supplier) where.supplier = { [Op.iLike]: `%${supplier}%` };
+    if (flowStatus) where.flowStatus = flowStatus;
     if (String(lowStock) === 'true') {
-      // porównanie do pola z dołączonego Product (alias "product")
       where.quantity = { [Op.lte]: literal('"product"."minStockLevel"') };
     }
 
@@ -140,7 +138,6 @@ router.get('/summary', async (_req, res) => {
 
 /* ===========================
    GET /api/inventory/operations
-   Filtry: productId, operationType, userId|performedBy, startDate, endDate
 =========================== */
 router.get('/operations', async (req, res) => {
   try {
@@ -232,7 +229,6 @@ router.get('/:id', async (req, res) => {
 
 /* ===========================
    POST /api/inventory
-   Tworzy pozycję + loguje operację "in"
 =========================== */
 router.post('/', async (req, res) => {
   try {
@@ -247,8 +243,9 @@ router.post('/', async (req, res) => {
       supplier,
       purchaseOrderNumber,
       condition = 'new',
+      flowStatus = 'available',  // <— NOWE
       notes,
-      lastUpdatedBy, // z JWT; fallback niżej
+      lastUpdatedBy,
     } = req.body;
 
     if (!productId || !location || !quantity) {
@@ -280,11 +277,11 @@ router.post('/', async (req, res) => {
       supplier: ensuredSupplier,
       purchaseOrderNumber: ensuredPO,
       condition,
+      flowStatus,           // <— zapis statusu
       notes: ensuredNotes,
       lastUpdatedBy: userId,
     });
 
-    // log operacji "in"
     await InventoryOperation.create({
       inventoryItemId: item.id,
       productId,
@@ -295,7 +292,6 @@ router.post('/', async (req, res) => {
       notes: 'Initial stock entry',
     });
 
-    // >>> GENERUJ ALERT NISKIEGO STANU (globalny) <<<
     try { await recomputeAndNotifyLowStock(productId); } catch (e) { console.warn('lowStock recompute failed:', e?.message); }
 
     const itemWithProduct = await InventoryItem.findByPk(item.id, {
@@ -314,7 +310,6 @@ router.post('/', async (req, res) => {
 
 /* ===========================
    PUT /api/inventory/:id
-   Aktualizacja + auto-log korekty ilości
 =========================== */
 router.put('/:id', async (req, res) => {
   try {
@@ -329,11 +324,12 @@ router.put('/:id', async (req, res) => {
     if (update.expiryDate) update.expiryDate = new Date(update.expiryDate);
     if (update.manufacturingDate) update.manufacturingDate = new Date(update.manufacturingDate);
     if (req.body.lastUpdatedBy != null) update.lastUpdatedBy = Number(req.body.lastUpdatedBy);
+    // flowStatus przechodzi wprost – waliduje Sequelize ENUM
 
     await item.update(update);
 
     if (update.quantity != null && update.quantity !== prevQty) {
-      const delta = update.quantity - prevQty; // + lub -
+      const delta = update.quantity - prevQty;
       await InventoryOperation.create({
         inventoryItemId: item.id,
         productId: item.productId,
@@ -344,7 +340,6 @@ router.put('/:id', async (req, res) => {
         notes: `Manual quantity change via UI: ${prevQty} → ${update.quantity}`
       });
 
-      // >>> GENERUJ ALERT NISKIEGO STANU (globalny) <<<
       try { await recomputeAndNotifyLowStock(item.productId); } catch (e) { console.warn('lowStock recompute failed:', e?.message); }
     }
 
@@ -375,7 +370,6 @@ router.delete('/:id', async (req, res) => {
     const productId = item.productId;
     await item.destroy();
 
-    // Po usunięciu pustej pozycji globalna dostępność może się zmienić
     try { await recomputeAndNotifyLowStock(productId); } catch (e) { console.warn('lowStock recompute failed:', e?.message); }
 
     res.json({ success: true, data: { message: 'Inventory item deleted successfully' } });
@@ -387,13 +381,12 @@ router.delete('/:id', async (req, res) => {
 
 /* ===========================
    POST /api/inventory/operations
-   Tworzenie operacji + aktualizacja stanu
 =========================== */
 router.post('/operations', async (req, res) => {
   try {
     const {
       inventoryItemId,
-      operationType,        // 'in' | 'out'
+      operationType,
       quantity,
       userId,
       operationDate = new Date(),
@@ -438,7 +431,6 @@ router.post('/operations', async (req, res) => {
 
     await item.update({ quantity: quantityAfter, lastUpdatedBy: actor });
 
-    // >>> GENERUJ ALERT NISKIEGO STANU (globalny) <<<
     try { await recomputeAndNotifyLowStock(item.productId); } catch (e) { console.warn('lowStock recompute failed:', e?.message); }
 
     res.status(201).json({
@@ -452,8 +444,7 @@ router.post('/operations', async (req, res) => {
 });
 
 /* ===========================
-   (opcjonalnie) Ręczny trigger do testów
-   POST /api/inventory/alerts/recompute { productId }
+   Ręczny trigger do testów
 =========================== */
 router.post('/alerts/recompute', async (req, res) => {
   try {

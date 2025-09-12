@@ -1,4 +1,3 @@
-// src/pages/InventoryListPage.jsx
 import React, { useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { toast } from 'react-toastify';
@@ -45,11 +44,12 @@ export default function InventoryListPage() {
   const [prodOptions, setProdOptions] = useState([]);
   const [loc, setLoc] = useState('');
   const [supplier, setSupplier] = useState('');
+  const [flowStatus, setFlowStatus] = useState(''); // <— NOWE
   const [onlyLow, setOnlyLow] = useState(false);
   const [sort, setSort] = useState('idAsc');
 
   // --- Lp. vs ID ---
-  const [showSequential, setShowSequential] = useState(true); // true = Lp. 1..N, false = real ID
+  const [showSequential, setShowSequential] = useState(true);
 
   // --- EDYCJA ---
   const [editId, setEditId] = useState(null);
@@ -68,6 +68,7 @@ export default function InventoryListPage() {
         productId: productId || undefined,
         location: loc || undefined,
         supplier: supplier || undefined,
+        flowStatus: flowStatus || undefined, // <— NOWE
         lowStock: onlyLow || undefined,
         limit: 50,
       });
@@ -93,7 +94,7 @@ export default function InventoryListPage() {
     return Array.isArray(items) ? [...items].sort(srt) : [];
   }, [items, sort]);
 
-  // --- AUTOCOMPLETE PRODUKTU (debounce + lokalne dopasowanie) ---
+  // --- AUTOCOMPLETE PRODUKTU ---
   const timer = useRef(null);
   const inflight = useRef(null);
 
@@ -162,9 +163,7 @@ export default function InventoryListPage() {
       const list = await getProductOptions(nameBeforeParen(q) || q, 20);
       setProdOptions(list || []);
       setProductId(findLocalId(q, list || []));
-    } catch (_e) {
-      /* ignore */
-    }
+    } catch (_e) {}
   };
 
   // --- EDYCJA WIERSZA ---
@@ -175,6 +174,7 @@ export default function InventoryListPage() {
       quantity: row.quantity,
       reservedQuantity: row.reservedQuantity,
       condition: row.condition || 'new',
+      flowStatus: row.flowStatus || 'available', // <— NOWE
     });
   };
   const cancelEdit = () => { setEditId(null); setDraft({}); };
@@ -219,6 +219,7 @@ export default function InventoryListPage() {
     setProductId(null);
     setLoc('');
     setSupplier('');
+    setFlowStatus('');
     setOnlyLow(false);
     setSort('idAsc');
     load();
@@ -229,6 +230,7 @@ export default function InventoryListPage() {
     productId: productId || undefined,
     location: loc || undefined,
     supplier: supplier || undefined,
+    flowStatus: flowStatus || undefined, // <— NOWE
     lowStock: onlyLow || undefined,
   });
 
@@ -251,6 +253,12 @@ export default function InventoryListPage() {
       toast.error(e.message || 'Nie udało się wyeksportować PDF');
     }
   };
+
+  const statusLabel = (v) =>
+    v === 'in_transit' ? 'W tranzycie'
+    : v === 'damaged' ? 'Uszkodzone'
+    : v === 'reserved' ? 'Zarezerwowane'
+    : 'Dostępne';
 
   return (
   <div className="inventory-page">
@@ -278,6 +286,15 @@ export default function InventoryListPage() {
         onChange={(e) => setLoc(e.target.value)}
         style={{ minWidth: 160 }}
       />
+
+      <select value={flowStatus} onChange={(e) => setFlowStatus(e.target.value)}>
+        <option value="">Status: wszystkie</option>
+        <option value="available">Dostępne</option>
+        <option value="in_transit">W tranzycie</option>
+        <option value="damaged">Uszkodzone</option>
+        <option value="reserved">Zarezerwowane</option>
+      </select>
+
       <select value={sort} onChange={(e) => setSort(e.target.value)}>
         {sorters.map((s) => (
           <option key={s.value} value={s.value}>{`Sort: ${s.label}`}</option>
@@ -321,15 +338,16 @@ export default function InventoryListPage() {
             <th>Ilość</th>
             <th>Zarezerw.</th>
             <th>Dostępna</th>
-            <th>Stan</th>
+            <th>Stan tech.</th>
+            <th>Status</th>
             <th>Akcje</th>
           </tr>
         </thead>
         <tbody>
           {loading ? (
-            <tr><td colSpan={8} style={{ padding: 16 }}>Ładowanie…</td></tr>
+            <tr><td colSpan={9} style={{ padding: 16 }}>Ładowanie…</td></tr>
           ) : visible.length === 0 ? (
-            <tr><td colSpan={8} style={{ padding: 16 }}>Brak pozycji</td></tr>
+            <tr><td colSpan={9} style={{ padding: 16 }}>Brak pozycji</td></tr>
           ) : (
             visible.map((row, idx) => {
               const available = (row.quantity || 0) - (row.reservedQuantity || 0);
@@ -407,6 +425,22 @@ export default function InventoryListPage() {
                       </select>
                     ) : (
                       row.condition || '—'
+                    )}
+                  </td>
+
+                  <td style={{ width: 160 }}>
+                    {isEdit ? (
+                      <select
+                        value={draft.flowStatus}
+                        onChange={(e) => changeDraft('flowStatus', e.target.value)}
+                      >
+                        <option value="available">Dostępne</option>
+                        <option value="in_transit">W tranzycie</option>
+                        <option value="damaged">Uszkodzone</option>
+                        <option value="reserved">Zarezerwowane</option>
+                      </select>
+                    ) : (
+                      statusLabel(row.flowStatus)
                     )}
                   </td>
 
