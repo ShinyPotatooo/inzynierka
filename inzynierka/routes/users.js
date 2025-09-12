@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { User, ActivityLog } = require('../models');
+const { User, ActivityLog, sequelize } = require('../models');
 const bcrypt = require('bcrypt');
 const { Op } = require('sequelize');
 
@@ -34,15 +34,35 @@ const makeDeletedUsername = (base, id) => {
 };
 
 const makeDeletedEmail = (id) => {
-  // pozostaje poprawnym adresem i jest unikalny
   const val = `deleted+${id}.${Date.now()}@example.invalid`;
   return val.length > 100 ? val.slice(0, 100) : val;
 };
 
+/* ------------ Schema capabilities (cache) ------------ */
+let usersTableInfoPromise = null;        // promise z describeTable
+let hasIsActiveColumn = null;            // boolean albo null (nieustalone)
+
+async function ensureUsersTableInfo() {
+  if (!usersTableInfoPromise) {
+    usersTableInfoPromise = sequelize
+      .getQueryInterface()
+      .describeTable('users')
+      .then((info) => {
+        hasIsActiveColumn = Object.prototype.hasOwnProperty.call(info, 'isActive');
+        return info;
+      })
+      .catch(() => {
+        hasIsActiveColumn = false;
+        return null;
+      });
+  }
+  await usersTableInfoPromise;
+  return hasIsActiveColumn;
+}
+
 /* ---------------- OPTIONS ---------------- */
 /**
  * GET /api/users/options?query=...&limit=20
- * podpowiedzi tylko dla aktywnych
  */
 router.get('/options', async (req, res) => {
   try {
@@ -88,35 +108,66 @@ router.get('/options', async (req, res) => {
 // GET /api/users
 router.get('/', async (req, res) => {
   try {
-    const { page = 1, limit = 10, role, includeInactive } = req.query;
-    const offset = (Number(page) - 1) * Number(limit);
-    const where = {};
-    if (role) where.role = role;
-    if (!includeInactive) where.isActive = true; // domyślnie tylko aktywni
+    const ALLOWED_ROLES = new Set(['admin', 'manager', 'worker']);
 
-    const result = await User.findAndCountAll({
-      where,
-      attributes: { exclude: ['password'] },
-      limit: Number(limit),
-      offset,
-      order: [['createdAt', 'DESC']]
-    });
+    // ── Sanityzacja parametrów
+    const page = (() => {
+      const v = parseInt(req.query.page ?? '1', 10);
+      return Number.isFinite(v) && v > 0 ? v : 1;
+    })();
+
+    const limit = (() => {
+      const v = parseInt(req.query.limit ?? '50', 10);
+      if (!Number.isFinite(v)) return 50;
+      return Math.min(200, Math.max(1, v));
+    })();
+
+    const includeInactive = String(req.query.includeInactive ?? 'false').toLowerCase() === 'true';
+    const roleRaw = typeof req.query.role === 'string' ? req.query.role.trim() : '';
+
+    const where = {};
+    if (ALLOWED_ROLES.has(roleRaw)) where.role = roleRaw;
+
+    // Dodaj filtr isActive tylko, jeśli kolumna istnieje w DB
+    const canUseIsActive = await ensureUsersTableInfo();
+    if (!includeInactive && canUseIsActive) {
+      where.isActive = true;
+    }
+
+    const offset = (page - 1) * limit;
+
+    // Osobno count i list, prosto i pewnie
+    const [rows, count] = await Promise.all([
+      User.findAll({
+        where,
+        attributes: { exclude: ['password'] },
+        limit,
+        offset,
+        order: [['createdAt', 'DESC']],
+      }),
+      User.count({ where }),
+    ]);
 
     return res.json({
       success: true,
       data: {
-        users: result.rows,
+        users: rows,
         pagination: {
-          currentPage: Number(page),
-          totalPages: Math.ceil(result.count / Number(limit)),
-          totalItems: result.count,
-          itemsPerPage: Number(limit)
-        }
-      }
+          currentPage: page,
+          totalPages: Math.ceil(count / limit),
+          totalItems: count,
+          itemsPerPage: limit,
+        },
+      },
     });
   } catch (err) {
     console.error('Get users error:', err);
-    return res.status(500).json({ success: false, error: 'Internal server error' });
+    // W dev zwróć szczegóły, żeby łatwo namierzyć problem
+    return res.status(500).json({
+      success: false,
+      error: 'Internal server error',
+      details: err?.message,
+    });
   }
 });
 
@@ -251,13 +302,11 @@ router.delete('/:id', async (req, res) => {
     const targetId = Number(req.params.id);
     const { requesterId, currentAdminPassword } = req.body || {};
 
-    // zawsze wymagamy hasła admina
     await requireAdminAuth({ requesterId, currentAdminPassword });
 
     const userToDelete = await User.findByPk(targetId);
     if (!userToDelete) return res.status(404).json({ success: false, error: 'User not found' });
 
-    // nie usuwaj ostatniego admina
     if (userToDelete.role === 'admin') {
       const adminsCount = await User.count({ where: { role: 'admin', isActive: true } });
       if (adminsCount <= 1) {
@@ -265,7 +314,6 @@ router.delete('/:id', async (req, res) => {
       }
     }
 
-    // soft delete + zwolnienie unikalności
     const nextUsername = makeDeletedUsername(userToDelete.username, userToDelete.id);
     const nextEmail = makeDeletedEmail(userToDelete.id);
 
