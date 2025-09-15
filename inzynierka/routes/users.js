@@ -3,6 +3,7 @@ const router = express.Router();
 const { User, ActivityLog, sequelize } = require('../models');
 const bcrypt = require('bcrypt');
 const { Op } = require('sequelize');
+const { authenticateToken, requireRole } = require('../middleware/auth');
 
 /* ---------------- Helpers ---------------- */
 
@@ -106,7 +107,7 @@ router.get('/options', async (req, res) => {
 
 /* ---------------- LIST ---------------- */
 // GET /api/users
-router.get('/', async (req, res) => {
+router.get('/', authenticateToken, requireRole('admin', 'manager'), async (req, res) => {
   try {
     const ALLOWED_ROLES = new Set(['admin', 'manager', 'worker']);
 
@@ -173,7 +174,7 @@ router.get('/', async (req, res) => {
 
 /* ---------------- GET ONE ---------------- */
 // GET /api/users/:id
-router.get('/:id', async (req, res) => {
+router.get('/:id', authenticateToken, requireRole('admin', 'manager'), async (req, res) => {
   try {
     const user = await User.findByPk(req.params.id, {
       attributes: { exclude: ['password'] },
@@ -189,7 +190,7 @@ router.get('/:id', async (req, res) => {
 
 /* ---------------- CREATE ---------------- */
 // POST /api/users
-router.post('/', async (req, res) => {
+router.post('/', authenticateToken, requireRole('admin'), async (req, res) => {
   try {
     const { username, email, password, firstName, lastName, role = 'worker' } = req.body;
 
@@ -215,7 +216,7 @@ router.post('/', async (req, res) => {
 
 /* ---------------- UPDATE ---------------- */
 // PUT /api/users/:id
-router.put('/:id', async (req, res) => {
+router.put('/:id', authenticateToken, requireRole('admin'), async (req, res) => {
   try {
     const targetId = Number(req.params.id);
     const {
@@ -297,7 +298,7 @@ router.put('/:id', async (req, res) => {
 
 /* ---------------- DELETE (soft) ---------------- */
 // DELETE /api/users/:id
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', authenticateToken, requireRole('admin'), async (req, res) => {
   try {
     const targetId = Number(req.params.id);
     const { requesterId, currentAdminPassword } = req.body || {};

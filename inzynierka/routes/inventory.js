@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { Op, literal } = require('sequelize');
 const { InventoryItem, InventoryOperation, Product, User } = require('../models');
+const { authenticateToken, requireRole } = require('../middleware/auth');
 const { recomputeAndNotifyLowStock } = require('../utils/lowStock');
 
 /* ===========================
@@ -29,7 +30,7 @@ async function generatePurchaseOrderNumber(InventoryItemModel) {
 /* ===========================
    GET /api/inventory
 =========================== */
-router.get('/', async (req, res) => {
+router.get('/', authenticateToken, async (req, res) => {
   try {
     const {
       page = 1,
@@ -230,7 +231,7 @@ router.get('/:id', async (req, res) => {
 /* ===========================
    POST /api/inventory
 =========================== */
-router.post('/', async (req, res) => {
+router.post('/', authenticateToken, requireRole('admin', 'manager', 'worker'), async (req, res) => {
   try {
     const {
       productId,
@@ -311,7 +312,7 @@ router.post('/', async (req, res) => {
 /* ===========================
    PUT /api/inventory/:id
 =========================== */
-router.put('/:id', async (req, res) => {
+router.put('/:id', authenticateToken, requireRole('admin', 'manager', 'worker'), async (req, res) => {
   try {
     const item = await InventoryItem.findByPk(req.params.id);
     if (!item) return res.status(404).json({ success: false, error: 'Inventory item not found' });
@@ -356,7 +357,7 @@ router.put('/:id', async (req, res) => {
 /* ===========================
    DELETE /api/inventory/:id
 =========================== */
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', authenticateToken, requireRole('admin', 'manager'), async (req, res) => {
   try {
     const item = await InventoryItem.findByPk(req.params.id);
     if (!item) {
@@ -382,7 +383,7 @@ router.delete('/:id', async (req, res) => {
 /* ===========================
    POST /api/inventory/operations
 =========================== */
-router.post('/operations', async (req, res) => {
+router.post('/operations', authenticateToken, requireRole('admin', 'manager', 'worker'), async (req, res) => {
   try {
     const {
       inventoryItemId,

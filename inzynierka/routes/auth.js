@@ -6,6 +6,7 @@ const { Op } = require('sequelize');
 const crypto = require('crypto');
 const transporter = require('../utils/mailer');
 const jwt = require('jsonwebtoken');
+const { authenticateToken } = require('../middleware/auth');
 
 
 
@@ -64,7 +65,7 @@ router.post('/login', async (req, res) => {
     const token = jwt.sign(
       { id: user.id, role: user.role },
       process.env.JWT_SECRET || 'supersecretkey',
-      { expiresIn: '1h' } // token ważny 1h
+      { expiresIn: process.env.JWT_EXPIRES_IN || '24h' }
     );
 
     return res.json({
@@ -123,14 +124,66 @@ router.post('/register', async (req, res) => {
 });
 
 /**
- * GET /api/auth/me (placeholder pod JWT)
+ * GET /api/auth/me
+ * Get current authenticated user data
  */
-router.get('/me', (_req, res) => {
-  return res.json({
-    success: false,
-    error: 'JWT authentication not implemented yet',
-    message: 'This endpoint will return current user data when JWT is added'
-  });
+router.get('/me', authenticateToken, async (req, res) => {
+  try {
+    // User is already attached to req by authenticateToken middleware
+    const user = req.user;
+    
+    return res.json({
+      success: true,
+      data: {
+        user: {
+          id: user.id,
+          username: user.username,
+          email: user.email,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          role: user.role,
+          isActive: user.isActive
+        }
+      }
+    });
+  } catch (error) {
+    console.error('Get current user error:', error);
+    return res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
+});
+
+/**
+ * POST /api/auth/refresh
+ * Refresh JWT token for authenticated user
+ */
+router.post('/refresh', authenticateToken, async (req, res) => {
+  try {
+    const user = req.user;
+    
+    // Generate new token
+    const token = jwt.sign(
+      { id: user.id, role: user.role },
+      process.env.JWT_SECRET || 'supersecretkey',
+      { expiresIn: process.env.JWT_EXPIRES_IN || '24h' }
+    );
+
+    return res.json({
+      success: true,
+      data: {
+        token,
+        expiresIn: process.env.JWT_EXPIRES_IN || '24h'
+      }
+    });
+  } catch (error) {
+    console.error('Token refresh error:', error);
+    return res.status(500).json({
+      success: false,
+      error: 'Internal server error'
+    });
+  }
 });
 
 module.exports = router;
