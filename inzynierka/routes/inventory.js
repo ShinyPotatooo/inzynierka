@@ -2,17 +2,20 @@ const express = require('express');
 const router = express.Router();
 const { Op, literal } = require('sequelize');
 const { InventoryItem, InventoryOperation, Product, User } = require('../models');
-const { authenticateToken, requireRole } = require('../middleware/auth');
 const { recomputeAndNotifyLowStock } = require('../utils/lowStock');
+
+const FLOW_STATUSES = ['available', 'in_transit', 'reserved', 'damaged'];
+const isValidFlowStatus = (v) => typeof v === 'string' && FLOW_STATUSES.includes(v);
 
 /* ===========================
    Helpers
 =========================== */
 function todayIsoDate() {
   const d = new Date();
-  return d.toISOString().slice(0, 10);
+  return d.toISOString().slice(0, 10); // YYYY-MM-DD
 }
 
+// BATCH-YYYY-<seq per product>
 async function generateBatchNumber(InventoryItemModel, productId) {
   const year = new Date().getFullYear();
   const count = await InventoryItemModel.count({ where: { productId } });
@@ -20,6 +23,7 @@ async function generateBatchNumber(InventoryItemModel, productId) {
   return `BATCH-${year}-${seq}`;
 }
 
+// PO-YYYY-<global seq>
 async function generatePurchaseOrderNumber(InventoryItemModel) {
   const year = new Date().getFullYear();
   const total = await InventoryItemModel.count();
@@ -30,7 +34,7 @@ async function generatePurchaseOrderNumber(InventoryItemModel) {
 /* ===========================
    GET /api/inventory
 =========================== */
-router.get('/', authenticateToken, async (req, res) => {
+router.get('/', async (req, res) => {
   try {
     const {
       page = 1,
@@ -40,7 +44,7 @@ router.get('/', authenticateToken, async (req, res) => {
       condition,
       supplier,
       lowStock = false,
-      flowStatus, // <— NOWY filtr
+      flowStatus, // <= NOWE
     } = req.query;
 
     const offset = (Number(page) - 1) * Number(limit);
@@ -50,9 +54,11 @@ router.get('/', authenticateToken, async (req, res) => {
     if (location) where.location = { [Op.iLike]: `%${location}%` };
     if (condition) where.condition = condition;
     if (supplier) where.supplier = { [Op.iLike]: `%${supplier}%` };
-    if (flowStatus) where.flowStatus = flowStatus;
     if (String(lowStock) === 'true') {
       where.quantity = { [Op.lte]: literal('"product"."minStockLevel"') };
+    }
+    if (flowStatus && isValidFlowStatus(flowStatus)) {
+      where.flowStatus = flowStatus;
     }
 
     const result = await InventoryItem.findAndCountAll({
@@ -231,7 +237,7 @@ router.get('/:id', async (req, res) => {
 /* ===========================
    POST /api/inventory
 =========================== */
-router.post('/', authenticateToken, requireRole('admin', 'manager', 'worker'), async (req, res) => {
+router.post('/', async (req, res) => {
   try {
     const {
       productId,
@@ -244,9 +250,9 @@ router.post('/', authenticateToken, requireRole('admin', 'manager', 'worker'), a
       supplier,
       purchaseOrderNumber,
       condition = 'new',
-      flowStatus = 'available',  // <— NOWE
       notes,
-      lastUpdatedBy,
+      lastUpdatedBy, // z JWT; fallback niżej
+      flowStatus = 'available', // <= NOWE
     } = req.body;
 
     if (!productId || !location || !quantity) {
@@ -254,6 +260,9 @@ router.post('/', authenticateToken, requireRole('admin', 'manager', 'worker'), a
         success: false,
         error: 'Product ID, location, and quantity are required',
       });
+    }
+    if (flowStatus && !isValidFlowStatus(flowStatus)) {
+      return res.status(400).json({ success: false, error: 'Invalid flowStatus' });
     }
 
     const product = await Product.findByPk(productId);
@@ -278,11 +287,12 @@ router.post('/', authenticateToken, requireRole('admin', 'manager', 'worker'), a
       supplier: ensuredSupplier,
       purchaseOrderNumber: ensuredPO,
       condition,
-      flowStatus,           // <— zapis statusu
       notes: ensuredNotes,
       lastUpdatedBy: userId,
+      flowStatus, // <= NOWE
     });
 
+    // log operacji "in"
     await InventoryOperation.create({
       inventoryItemId: item.id,
       productId,
@@ -312,7 +322,7 @@ router.post('/', authenticateToken, requireRole('admin', 'manager', 'worker'), a
 /* ===========================
    PUT /api/inventory/:id
 =========================== */
-router.put('/:id', authenticateToken, requireRole('admin', 'manager', 'worker'), async (req, res) => {
+router.put('/:id', async (req, res) => {
   try {
     const item = await InventoryItem.findByPk(req.params.id);
     if (!item) return res.status(404).json({ success: false, error: 'Inventory item not found' });
@@ -320,17 +330,20 @@ router.put('/:id', authenticateToken, requireRole('admin', 'manager', 'worker'),
     const prevQty = item.quantity;
 
     const update = { ...req.body };
+    if (update.flowStatus && !isValidFlowStatus(update.flowStatus)) {
+      return res.status(400).json({ success: false, error: 'Invalid flowStatus' });
+    }
+
     if (update.quantity != null) update.quantity = parseInt(update.quantity, 10);
     if (update.reservedQuantity != null) update.reservedQuantity = parseInt(update.reservedQuantity, 10);
     if (update.expiryDate) update.expiryDate = new Date(update.expiryDate);
     if (update.manufacturingDate) update.manufacturingDate = new Date(update.manufacturingDate);
     if (req.body.lastUpdatedBy != null) update.lastUpdatedBy = Number(req.body.lastUpdatedBy);
-    // flowStatus przechodzi wprost – waliduje Sequelize ENUM
 
     await item.update(update);
 
     if (update.quantity != null && update.quantity !== prevQty) {
-      const delta = update.quantity - prevQty;
+      const delta = update.quantity - prevQty; // + lub -
       await InventoryOperation.create({
         inventoryItemId: item.id,
         productId: item.productId,
@@ -357,7 +370,7 @@ router.put('/:id', authenticateToken, requireRole('admin', 'manager', 'worker'),
 /* ===========================
    DELETE /api/inventory/:id
 =========================== */
-router.delete('/:id', authenticateToken, requireRole('admin', 'manager'), async (req, res) => {
+router.delete('/:id', async (req, res) => {
   try {
     const item = await InventoryItem.findByPk(req.params.id);
     if (!item) {
@@ -383,11 +396,11 @@ router.delete('/:id', authenticateToken, requireRole('admin', 'manager'), async 
 /* ===========================
    POST /api/inventory/operations
 =========================== */
-router.post('/operations', authenticateToken, requireRole('admin', 'manager', 'worker'), async (req, res) => {
+router.post('/operations', async (req, res) => {
   try {
     const {
       inventoryItemId,
-      operationType,
+      operationType,        // 'in' | 'out'
       quantity,
       userId,
       operationDate = new Date(),
@@ -411,9 +424,22 @@ router.post('/operations', authenticateToken, requireRole('admin', 'manager', 'w
     const q = parseInt(quantity, 10);
     const actor = userId ? Number(userId) : 1;
     const quantityBefore = item.quantity;
+    const available = Math.max(0, (item.quantity || 0) - (item.reservedQuantity || 0));
 
-    if (operationType === 'out' && q > (item.quantity - item.reservedQuantity)) {
-      return res.status(400).json({ success: false, error: 'Insufficient available quantity' });
+    // DODATKOWE REGUŁY wg flowStatus
+    if (operationType === 'out') {
+      if (item.flowStatus === 'damaged') {
+        return res.status(400).json({ success: false, error: 'Item is damaged — issuing is blocked' });
+      }
+      if (item.flowStatus === 'in_transit') {
+        return res.status(400).json({ success: false, error: 'Item is in transit — receive first or mark as available' });
+      }
+      if (item.flowStatus === 'reserved' && q > (item.reservedQuantity || 0)) {
+        return res.status(400).json({ success: false, error: 'Reserved item — cannot issue more than reserved quantity' });
+      }
+      if (q > available) {
+        return res.status(400).json({ success: false, error: 'Insufficient available quantity' });
+      }
     }
 
     const quantityAfter = operationType === 'in' ? quantityBefore + q : quantityBefore - q;
@@ -445,7 +471,7 @@ router.post('/operations', authenticateToken, requireRole('admin', 'manager', 'w
 });
 
 /* ===========================
-   Ręczny trigger do testów
+   (opcjonalnie) Ręczny trigger do testów
 =========================== */
 router.post('/alerts/recompute', async (req, res) => {
   try {

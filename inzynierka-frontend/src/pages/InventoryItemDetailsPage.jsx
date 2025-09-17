@@ -35,7 +35,7 @@ export default function InventoryItemDetailsPage() {
         purchaseOrderNumber: data.purchaseOrderNumber || '',
         supplier: data.supplier || '',
         condition: data.condition || 'new',
-        flowStatus: data.flowStatus || 'available', // <— NOWE
+        flowStatus: data.flowStatus || 'available', // <= NOWE
         reservedQuantity: data.reservedQuantity ?? 0,
         expiryDate: toDateInputValue(data.expiryDate),
         manufacturingDate: toDateInputValue(data.manufacturingDate),
@@ -81,12 +81,6 @@ export default function InventoryItemDetailsPage() {
 
   const available = (item.quantity || 0) - (item.reservedQuantity || 0);
 
-  const statusLabel = (v) =>
-    v === 'in_transit' ? 'W tranzycie'
-    : v === 'damaged' ? 'Uszkodzone'
-    : v === 'reserved' ? 'Zarezerwowane'
-    : 'Dostępne';
-
   return (
     <div style={{ padding: '2rem', maxWidth: 980 }}>
       <div style={{ marginBottom: 12 }}>
@@ -98,6 +92,15 @@ export default function InventoryItemDetailsPage() {
         <strong>Produkt:</strong> {item.product?.name}{' '}
         {item.product?.sku ? `(${item.product.sku})` : ''}
       </p>
+
+      {item.flowStatus === 'damaged' && (
+        <div style={{
+          padding: '10px 12px', border: '1px solid #fecaca', background: '#fff1f2',
+          color: '#7f1d1d', borderRadius: 8, marginBottom: 12, fontWeight: 600
+        }}>
+          Pozycja oznaczona jako <em>damaged</em> – wydanie zablokowane.
+        </div>
+      )}
 
       <div style={{ margin: '16px 0', padding: 16, border: '1px solid #eee', borderRadius: 8 }}>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
@@ -111,7 +114,7 @@ export default function InventoryItemDetailsPage() {
           </div>
 
           <div>
-            <label>Stan techniczny</label>
+            <label>Stan</label>
             {edit ? (
               <select
                 value={draft.condition}
@@ -135,13 +138,13 @@ export default function InventoryItemDetailsPage() {
                 value={draft.flowStatus}
                 onChange={(e) => changeDraft('flowStatus', e.target.value)}
               >
-                <option value="available">Dostępne</option>
-                <option value="in_transit">W tranzycie</option>
-                <option value="damaged">Uszkodzone</option>
-                <option value="reserved">Zarezerwowane</option>
+                <option value="available">available</option>
+                <option value="in_transit">in_transit</option>
+                <option value="reserved">reserved</option>
+                <option value="damaged">damaged</option>
               </select>
             ) : (
-              <div>{statusLabel(item.flowStatus)}</div>
+              <div>{item.flowStatus || 'available'}</div>
             )}
           </div>
 

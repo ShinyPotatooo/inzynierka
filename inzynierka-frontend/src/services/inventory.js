@@ -11,7 +11,7 @@ export async function fetchInventoryItems(params = {}) {
       condition: params.condition || undefined,
       supplier: params.supplier || undefined,
       lowStock: params.lowStock ?? undefined,
-      flowStatus: params.flowStatus || undefined, // <— NOWE
+      flowStatus: params.flowStatus || undefined, // <= NOWE
     },
   });
   if (!res.data?.success) throw new Error(res.data?.error || 'Błąd pobierania listy');
@@ -55,7 +55,7 @@ export async function deleteInventoryItem(id) {
   return true;
 }
 
-/** Utworzenie operacji magazynowej */
+/** Utworzenie operacji magazynowej (in/out/transfer/adjustment...) */
 export async function createInventoryOperation(payload) {
   const res = await API.post('/inventory/operations', payload);
   if (!res.data?.success) throw new Error(res.data?.error || 'Błąd tworzenia operacji');

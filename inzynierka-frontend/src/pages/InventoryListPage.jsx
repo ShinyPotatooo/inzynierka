@@ -30,6 +30,32 @@ const extractSku = (label = '') => {
 };
 const nameBeforeParen = (label = '') => String(label).split('(')[0].trim();
 
+const FLOW_STATUSES = [
+  { value: '', label: '— dowolny —' },
+  { value: 'available', label: 'Dostępny' },
+  { value: 'in_transit', label: 'W tranzycie' },
+  { value: 'reserved', label: 'Zarezerwowany' },
+  { value: 'damaged', label: 'Uszkodzony' },
+];
+
+function FlowBadge({ status }) {
+  const map = {
+    available: { bg: '#DCFCE7', fg: '#166534', label: 'available' },
+    in_transit: { bg: '#DBEAFE', fg: '#1E40AF', label: 'in_transit' },
+    reserved: { bg: '#FEF3C7', fg: '#92400E', label: 'reserved' },
+    damaged: { bg: '#FEE2E2', fg: '#991B1B', label: 'damaged' },
+  };
+  const s = map[status] || { bg: '#E5E7EB', fg: '#374151', label: status || '—' };
+  return (
+    <span style={{
+      background: s.bg, color: s.fg, borderRadius: 999, padding: '2px 8px',
+      fontSize: 12, fontWeight: 600, textTransform: 'none'
+    }}>
+      {s.label}
+    </span>
+  );
+}
+
 export default function InventoryListPage() {
   const { user } = useContext(AuthContext);
   const userId = user?.id ?? 1;
@@ -44,8 +70,8 @@ export default function InventoryListPage() {
   const [prodOptions, setProdOptions] = useState([]);
   const [loc, setLoc] = useState('');
   const [supplier, setSupplier] = useState('');
-  const [flowStatus, setFlowStatus] = useState(''); // <— NOWE
   const [onlyLow, setOnlyLow] = useState(false);
+  const [flowStatus, setFlowStatus] = useState(''); // <= NOWE
   const [sort, setSort] = useState('idAsc');
 
   // --- Lp. vs ID ---
@@ -68,8 +94,8 @@ export default function InventoryListPage() {
         productId: productId || undefined,
         location: loc || undefined,
         supplier: supplier || undefined,
-        flowStatus: flowStatus || undefined, // <— NOWE
         lowStock: onlyLow || undefined,
+        flowStatus: flowStatus || undefined, // <= NOWE
         limit: 50,
       });
       setItems(Array.isArray(list) ? list : []);
@@ -84,10 +110,7 @@ export default function InventoryListPage() {
     }
   };
 
-  useEffect(() => {
-    load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  useEffect(() => { load(); /* eslint-disable react-hooks/exhaustive-deps */ }, []);
 
   const visible = useMemo(() => {
     const srt = bySorter(sort);
@@ -145,7 +168,7 @@ export default function InventoryListPage() {
     }, DEBOUNCE_MS);
 
     return () => clearTimeout(timer.current);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line
   }, [productInput]);
 
   const finalizeProduct = async () => {
@@ -163,7 +186,9 @@ export default function InventoryListPage() {
       const list = await getProductOptions(nameBeforeParen(q) || q, 20);
       setProdOptions(list || []);
       setProductId(findLocalId(q, list || []));
-    } catch (_e) {}
+    } catch (_e) {
+      /* ignore */
+    }
   };
 
   // --- EDYCJA WIERSZA ---
@@ -174,7 +199,7 @@ export default function InventoryListPage() {
       quantity: row.quantity,
       reservedQuantity: row.reservedQuantity,
       condition: row.condition || 'new',
-      flowStatus: row.flowStatus || 'available', // <— NOWE
+      flowStatus: row.flowStatus || 'available', // <= NOWE
     });
   };
   const cancelEdit = () => { setEditId(null); setDraft({}); };
@@ -219,8 +244,8 @@ export default function InventoryListPage() {
     setProductId(null);
     setLoc('');
     setSupplier('');
-    setFlowStatus('');
     setOnlyLow(false);
+    setFlowStatus('');
     setSort('idAsc');
     load();
   };
@@ -230,8 +255,8 @@ export default function InventoryListPage() {
     productId: productId || undefined,
     location: loc || undefined,
     supplier: supplier || undefined,
-    flowStatus: flowStatus || undefined, // <— NOWE
     lowStock: onlyLow || undefined,
+    flowStatus: flowStatus || undefined,
   });
 
   const onExportCSV = async () => {
@@ -253,12 +278,6 @@ export default function InventoryListPage() {
       toast.error(e.message || 'Nie udało się wyeksportować PDF');
     }
   };
-
-  const statusLabel = (v) =>
-    v === 'in_transit' ? 'W tranzycie'
-    : v === 'damaged' ? 'Uszkodzone'
-    : v === 'reserved' ? 'Zarezerwowane'
-    : 'Dostępne';
 
   return (
   <div className="inventory-page">
@@ -286,15 +305,6 @@ export default function InventoryListPage() {
         onChange={(e) => setLoc(e.target.value)}
         style={{ minWidth: 160 }}
       />
-
-      <select value={flowStatus} onChange={(e) => setFlowStatus(e.target.value)}>
-        <option value="">Status: wszystkie</option>
-        <option value="available">Dostępne</option>
-        <option value="in_transit">W tranzycie</option>
-        <option value="damaged">Uszkodzone</option>
-        <option value="reserved">Zarezerwowane</option>
-      </select>
-
       <select value={sort} onChange={(e) => setSort(e.target.value)}>
         {sorters.map((s) => (
           <option key={s.value} value={s.value}>{`Sort: ${s.label}`}</option>
@@ -311,6 +321,12 @@ export default function InventoryListPage() {
         onChange={(e) => setSupplier(e.target.value)}
         style={{ minWidth: 160 }}
       />
+
+      {/* NOWY filtr statusu przepływu */}
+      <select value={flowStatus} onChange={(e) => setFlowStatus(e.target.value)} style={{ minWidth: 170 }}>
+        {FLOW_STATUSES.map(o => <option key={o.value || 'any'} value={o.value}>{o.label}</option>)}
+      </select>
+
       <label className="checkbox-label">
         <input type="checkbox" checked={onlyLow} onChange={(e) => setOnlyLow(e.target.checked)} />
         Niski stan
@@ -338,8 +354,8 @@ export default function InventoryListPage() {
             <th>Ilość</th>
             <th>Zarezerw.</th>
             <th>Dostępna</th>
-            <th>Stan tech.</th>
-            <th>Status</th>
+            <th>Stan</th>
+            <th>Status (przepływ)</th>
             <th>Akcje</th>
           </tr>
         </thead>
@@ -428,19 +444,19 @@ export default function InventoryListPage() {
                     )}
                   </td>
 
-                  <td style={{ width: 160 }}>
+                  <td style={{ width: 170 }}>
                     {isEdit ? (
                       <select
                         value={draft.flowStatus}
                         onChange={(e) => changeDraft('flowStatus', e.target.value)}
                       >
-                        <option value="available">Dostępne</option>
-                        <option value="in_transit">W tranzycie</option>
-                        <option value="damaged">Uszkodzone</option>
-                        <option value="reserved">Zarezerwowane</option>
+                        <option value="available">available</option>
+                        <option value="in_transit">in_transit</option>
+                        <option value="reserved">reserved</option>
+                        <option value="damaged">damaged</option>
                       </select>
                     ) : (
-                      statusLabel(row.flowStatus)
+                      <FlowBadge status={row.flowStatus} />
                     )}
                   </td>
 
