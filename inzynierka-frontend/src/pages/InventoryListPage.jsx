@@ -10,7 +10,7 @@ import {
 import { getProductOptions } from '../services/products';
 import { downloadInventoryCSV, downloadInventoryPDF } from '../services/download';
 import OperationModal from '../components/Inventory/OperationModal';
-import '../components/styles/InventoryListPage.css'; 
+import '../components/styles/InventoryListPage.css';
 
 const sorters = [
   { value: 'idAsc', label: 'ID rosnąco' },
@@ -30,30 +30,51 @@ const extractSku = (label = '') => {
 };
 const nameBeforeParen = (label = '') => String(label).split('(')[0].trim();
 
+// FILTR – bez 'reserved'
 const FLOW_STATUSES = [
-  { value: '', label: '— dowolny —' },
+  { value: '',          label: '— dowolny —' },
   { value: 'available', label: 'Dostępny' },
-  { value: 'in_transit', label: 'W tranzycie' },
-  { value: 'reserved', label: 'Zarezerwowany' },
-  { value: 'damaged', label: 'Uszkodzony' },
+  { value: 'in_transit',label: 'W tranzycie' },
+  { value: 'damaged',   label: 'Uszkodzony' },
 ];
 
 function FlowBadge({ status }) {
   const map = {
-    available: { bg: '#DCFCE7', fg: '#166534', label: 'available' },
-    in_transit: { bg: '#DBEAFE', fg: '#1E40AF', label: 'in_transit' },
-    reserved: { bg: '#FEF3C7', fg: '#92400E', label: 'reserved' },
-    damaged: { bg: '#FEE2E2', fg: '#991B1B', label: 'damaged' },
+    available:   { bg: '#DCFCE7', fg: '#166534', label: 'available' },
+    in_transit:  { bg: '#DBEAFE', fg: '#1E40AF', label: 'in_transit' },
+    reserved:    { bg: '#FEF3C7', fg: '#92400E', label: 'reserved' },
+    damaged:     { bg: '#FEE2E2', fg: '#991B1B', label: 'damaged' },
+    empty:       { bg: '#E5E7EB', fg: '#374151', label: 'empty' },
+    low:         { bg: '#FFEDD5', fg: '#9A3412', label: 'low' },
+    reserved_all:{ bg: '#FFF7ED', fg: '#7C2D12', label: 'reserved_all' },
   };
   const s = map[status] || { bg: '#E5E7EB', fg: '#374151', label: status || '—' };
   return (
     <span style={{
       background: s.bg, color: s.fg, borderRadius: 999, padding: '2px 8px',
-      fontSize: 12, fontWeight: 600, textTransform: 'none'
+      fontSize: 12, fontWeight: 600
     }}>
       {s.label}
     </span>
   );
+}
+
+// AUTO status (priorytety: empty > reserved_all > in_transit|damaged > low > available)
+function computeAutoStatus(row) {
+  const qty  = Number(row.quantity || 0);
+  const res  = Number(row.reservedQuantity || 0);
+  const avail = Math.max(0, qty - res);
+  if (qty === 0) return 'empty';
+  if (avail === 0) return 'reserved_all';
+  if (row.flowStatus === 'in_transit') return 'in_transit';
+  if (row.flowStatus === 'damaged') return 'damaged';
+  const reorder = Number(row.product?.reorderPoint || 0);
+  if (reorder > 0 && avail < reorder) return 'low';
+  return 'available';
+}
+function AutoStatusChip({ row }) {
+  const v = computeAutoStatus(row);
+  return <FlowBadge status={v} />;
 }
 
 export default function InventoryListPage() {
@@ -71,7 +92,7 @@ export default function InventoryListPage() {
   const [loc, setLoc] = useState('');
   const [supplier, setSupplier] = useState('');
   const [onlyLow, setOnlyLow] = useState(false);
-  const [flowStatus, setFlowStatus] = useState(''); // <= NOWE
+  const [flowStatus, setFlowStatus] = useState('');
   const [sort, setSort] = useState('idAsc');
 
   // --- Lp. vs ID ---
@@ -95,7 +116,7 @@ export default function InventoryListPage() {
         location: loc || undefined,
         supplier: supplier || undefined,
         lowStock: onlyLow || undefined,
-        flowStatus: flowStatus || undefined, // <= NOWE
+        flowStatus: flowStatus || undefined,
         limit: 50,
       });
       setItems(Array.isArray(list) ? list : []);
@@ -199,7 +220,7 @@ export default function InventoryListPage() {
       quantity: row.quantity,
       reservedQuantity: row.reservedQuantity,
       condition: row.condition || 'new',
-      flowStatus: row.flowStatus || 'available', // <= NOWE
+      flowStatus: row.flowStatus || 'available',
     });
   };
   const cancelEdit = () => { setEditId(null); setDraft({}); };
@@ -322,7 +343,7 @@ export default function InventoryListPage() {
         style={{ minWidth: 160 }}
       />
 
-      {/* NOWY filtr statusu przepływu */}
+      {/* filtr statusu przepływu (bez 'reserved') */}
       <select value={flowStatus} onChange={(e) => setFlowStatus(e.target.value)} style={{ minWidth: 170 }}>
         {FLOW_STATUSES.map(o => <option key={o.value || 'any'} value={o.value}>{o.label}</option>)}
       </select>
@@ -368,12 +389,11 @@ export default function InventoryListPage() {
             visible.map((row, idx) => {
               const available = (row.quantity || 0) - (row.reservedQuantity || 0);
               const isEdit = editId === row.id;
+              const auto = computeAutoStatus(row);
 
               return (
                 <tr key={row.id}>
-                  <td style={{ width: 60 }}>
-                    {showSequential ? (idx + 1) : row.id}
-                  </td>
+                  <td style={{ width: 60 }}>{showSequential ? (idx + 1) : row.id}</td>
 
                   <td>
                     <div className="product-cell">
@@ -390,9 +410,7 @@ export default function InventoryListPage() {
                         value={draft.location}
                         onChange={(e) => changeDraft('location', e.target.value)}
                       />
-                    ) : (
-                      row.location || '—'
-                    )}
+                    ) : (row.location || '—')}
                   </td>
 
                   <td style={{ width: 120 }}>
@@ -405,9 +423,7 @@ export default function InventoryListPage() {
                         onChange={(e) => changeDraft('quantity', e.target.value)}
                         style={{ width: 100 }}
                       />
-                    ) : (
-                      row.quantity
-                    )}
+                    ) : row.quantity}
                   </td>
 
                   <td style={{ width: 120 }}>
@@ -420,9 +436,7 @@ export default function InventoryListPage() {
                         onChange={(e) => changeDraft('reservedQuantity', e.target.value)}
                         style={{ width: 100 }}
                       />
-                    ) : (
-                      row.reservedQuantity
-                    )}
+                    ) : row.reservedQuantity}
                   </td>
 
                   <td style={{ width: 100 }}>{available}</td>
@@ -439,24 +453,33 @@ export default function InventoryListPage() {
                         <option value="damaged">Uszkodzony</option>
                         <option value="expired">Przeterminowany</option>
                       </select>
-                    ) : (
-                      row.condition || '—'
-                    )}
+                    ) : (row.condition || '—')}
                   </td>
 
-                  <td style={{ width: 170 }}>
+                  <td style={{ width: 200 }}>
                     {isEdit ? (
-                      <select
-                        value={draft.flowStatus}
-                        onChange={(e) => changeDraft('flowStatus', e.target.value)}
-                      >
-                        <option value="available">available</option>
-                        <option value="in_transit">in_transit</option>
-                        <option value="reserved">reserved</option>
-                        <option value="damaged">damaged</option>
-                      </select>
+                      <>
+                        <select
+                          value={draft.flowStatus}
+                          onChange={(e) => changeDraft('flowStatus', e.target.value)}
+                        >
+                          <option value="available">available</option>
+                          <option value="in_transit">in_transit</option>
+                          <option value="damaged">damaged</option>
+                        </select>
+                        <div style={{ marginTop: 6, fontSize: 12, color: '#6b7280' }}>
+                          auto: <AutoStatusChip row={{ ...row, ...draft }} />
+                        </div>
+                      </>
                     ) : (
-                      <FlowBadge status={row.flowStatus} />
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <FlowBadge status={auto} />
+                        {auto !== row.flowStatus && (
+                          <span style={{ fontSize: 12, color: '#6b7280' }}>
+                            ({row.flowStatus})
+                          </span>
+                        )}
+                      </div>
                     )}
                   </td>
 

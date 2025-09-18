@@ -29,6 +29,7 @@ function buildWhereAndParams(q = {}) {
   if (q.brand)    { where.push(`p.brand = :brand`);       params.brand    = String(q.brand); }
   if (q.status)   { where.push(`p.status = :status`);     params.status   = String(q.status); }
   if (q.productId){ where.push(`p.id = :productId`);      params.productId= Number(q.productId); }
+  if (q.flowStatus){ where.push(`i."flowStatus" = :flowStatus`); params.flowStatus = String(q.flowStatus); }
 
   if (q.search) {
     where.push(`(
@@ -85,6 +86,7 @@ async function runQuery(query, { logLabel } = {}) {
       i.quantity                AS stock,
       COALESCE(i."reservedQuantity", 0) AS reserved,
       (i.quantity - COALESCE(i."reservedQuantity",0)) AS available,
+      i."flowStatus"            AS flow,
       i.id                      AS "itemId",
       i."createdAt",
       i."updatedAt"
@@ -109,6 +111,7 @@ async function runQuery(query, { logLabel } = {}) {
       stock: Number(r.stock || 0),
       reserved: Number(r.reserved || 0),
       available: Number(r.available || 0),
+      flow: r.flow || 'available',
     }));
   } catch (err) {
     console.error(`\n[${logLabel || 'inventoryExport'}] RAW SQL ERROR`);
@@ -162,7 +165,6 @@ function drawTable(doc, cols, rows, opts = {}) {
   const pageBottom = () => doc.page.height - doc.page.margins.bottom;
 
   for (const r of rows) {
-    // compute cell heights
     const heights = cols.map(c => {
       let val = r[c.key] ?? '';
       if (c.truncate && typeof val === 'string' && val.length > c.truncate) {
@@ -172,12 +174,10 @@ function drawTable(doc, cols, rows, opts = {}) {
     });
     const rowH = Math.max(...heights, 10) + padY * 2;
 
-    // page break
     if (y + rowH > pageBottom()) {
       doc.addPage();
       y = doc.page.margins.top;
 
-      // repeat header
       doc.font(opts.fonts.bold).fontSize(9);
       x = x0;
       cols.forEach(c => {
@@ -192,7 +192,6 @@ function drawTable(doc, cols, rows, opts = {}) {
       doc.font(opts.fonts.regular);
     }
 
-    // draw row
     x = x0;
     cols.forEach(c => {
       let val = r[c.key] ?? '';
@@ -206,7 +205,6 @@ function drawTable(doc, cols, rows, opts = {}) {
     y += rowH;
   }
 
-  // bottom line
   doc.moveTo(doc.page.margins.left, y)
      .lineTo(doc.page.width - doc.page.margins.right, y)
      .strokeColor('#eee').stroke();
@@ -236,11 +234,8 @@ router.get('/export.csv', async (req, res) => {
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
 
     const header = [
-      'SKU','Nazwa','Kategoria','Marka','Jednostka','Cena',
-      'Barcode','Status produktu',
-      'Min','Reorder','Max',
-      'Stan','Zarezerwowane','Dostępne',
-      'ID pozycji','Utworzono','Zaktualizowano'
+      'SKU','Nazwa','Kategoria','Przepływ','Stan','Zarezerwowane','Dostępne',
+      'Min','Reorder','Max','ID pozycji','Utworzono','Zaktualizowano'
     ];
 
     const esc = (v) => {
@@ -249,15 +244,13 @@ router.get('/export.csv', async (req, res) => {
       return /[,"\n;]/.test(s) ? `"${s.replace(/"/g,'""')}"` : s;
     };
 
-    res.write('\uFEFF'); // BOM
+    res.write('\uFEFF');
     res.write(header.join(';') + '\n');
     for (const r of rows) {
       const line = [
-        r.sku, r.name, r.category, r.brand, r.unit,
-        r.price != null ? r.price.toFixed(2) : '',
-        r.barcode, r.productStatus,
-        r.min, r.reorder, r.max,
+        r.sku, r.name, r.category, r.flow,
         r.stock, r.reserved, r.available,
+        r.min, r.reorder, r.max,
         r.itemId,
         r.createdAt ? new Date(r.createdAt).toISOString() : '',
         r.updatedAt ? new Date(r.updatedAt).toISOString() : '',
@@ -287,6 +280,7 @@ router.get('/export.pdf', async (req, res) => {
       min:      r.min ?? '',
       reorder:  r.reorder ?? '',
       max:      r.max ?? '',
+      flow:     r.flow ?? 'available',
     }));
 
     const now = new Date();
@@ -307,9 +301,10 @@ router.get('/export.pdf', async (req, res) => {
     doc.moveDown(0.8);
 
     const cols = [
-      { key: 'sku',       label: 'SKU',        width: 95,  truncate: 22 },
+      { key: 'sku',       label: 'SKU',        width: 90,  truncate: 22 },
       { key: 'name',      label: 'Nazwa',      width: 200, truncate: 60 },
       { key: 'category',  label: 'Kategoria',  width: 110, truncate: 26 },
+      { key: 'flow',      label: 'Przepływ',   width: 70 },
       { key: 'stock',     label: 'Stan',       width: 40,  align: 'right' },
       { key: 'reserved',  label: 'Zarezerw.',  width: 60,  align: 'right' },
       { key: 'available', label: 'Dostępne',   width: 60,  align: 'right' },

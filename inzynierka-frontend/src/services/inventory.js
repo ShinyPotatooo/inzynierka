@@ -11,7 +11,7 @@ export async function fetchInventoryItems(params = {}) {
       condition: params.condition || undefined,
       supplier: params.supplier || undefined,
       lowStock: params.lowStock ?? undefined,
-      flowStatus: params.flowStatus || undefined, // <= NOWE
+      flowStatus: params.flowStatus || undefined,
     },
   });
   if (!res.data?.success) throw new Error(res.data?.error || 'Błąd pobierania listy');

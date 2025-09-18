@@ -31,7 +31,7 @@ export default function InventoryItemFormPage() {
   const [quantity, setQuantity] = useState('');
   const [reservedQuantity, setReservedQuantity] = useState('');
   const [condition, setCondition] = useState('new');
-  const [flowStatus, setFlowStatus] = useState('available'); // <= NOWE
+  const [flowStatus, setFlowStatus] = useState('available');
   const [supplier, setSupplier] = useState('');
   const [batchNumber, setBatchNumber] = useState('');
   const [purchaseOrderNumber, setPurchaseOrderNumber] = useState('');
@@ -41,7 +41,6 @@ export default function InventoryItemFormPage() {
 
   const delayer = useRef(null);
 
-  /** Lokalne dopasowanie */
   const tryLocal = useCallback((value, list = []) => {
     const n = normalize(value);
     const exact = list.find(o => normalize(o.label) === n);
@@ -56,7 +55,6 @@ export default function InventoryItemFormPage() {
     return null;
   }, []);
 
-  /** 1) Ładowanie propozycji (po wpisie) */
   useEffect(() => {
     const q = productQuery.trim();
     if (delayer.current) clearTimeout(delayer.current);
@@ -116,7 +114,6 @@ export default function InventoryItemFormPage() {
     setProductId(local);
   };
 
-  /** SUBMIT */
   const onSubmit = async (e) => {
     e.preventDefault();
     if (!productId) await finalizeProductChoice();
@@ -142,7 +139,7 @@ export default function InventoryItemFormPage() {
         quantity: qty,
         reservedQuantity: reservedQuantity ? Number(reservedQuantity) : 0,
         condition,
-        flowStatus, // <= NOWE
+        flowStatus,
         supplier: supplier || undefined,
         batchNumber: batchNumber || undefined,
         purchaseOrderNumber: purchaseOrderNumber || undefined,
@@ -171,7 +168,6 @@ export default function InventoryItemFormPage() {
 
       <div className="inv-card">
         <form onSubmit={onSubmit} className="form-grid">
-          {/* LEWA KOLUMNA */}
           <div className="field">
             <label>Produkt (nazwa / SKU)</label>
             <input
@@ -227,12 +223,8 @@ export default function InventoryItemFormPage() {
             <select value={flowStatus} onChange={(e) => setFlowStatus(e.target.value)}>
               <option value="available">available</option>
               <option value="in_transit">in_transit</option>
-              <option value="reserved">reserved</option>
               <option value="damaged">damaged</option>
             </select>
-            <small style={{ color:'#6b7280' }}>
-              Wybierz „reserved” aby oznaczyć rezerwację; rozważ ustawienie pola „Zarezerwowana”.
-            </small>
           </div>
 
           <div className="field">

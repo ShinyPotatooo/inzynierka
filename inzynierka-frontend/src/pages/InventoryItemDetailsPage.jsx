@@ -4,6 +4,40 @@ import { toast } from 'react-toastify';
 import { AuthContext } from '../context/AuthContext';
 import { getInventoryItem, updateInventoryItem } from '../services/inventory';
 
+function FlowBadge({ status }) {
+  const map = {
+    available:   { bg: '#DCFCE7', fg: '#166534', label: 'available' },
+    in_transit:  { bg: '#DBEAFE', fg: '#1E40AF', label: 'in_transit' },
+    reserved:    { bg: '#FEF3C7', fg: '#92400E', label: 'reserved' },
+    damaged:     { bg: '#FEE2E2', fg: '#991B1B', label: 'damaged' },
+    empty:       { bg: '#E5E7EB', fg: '#374151', label: 'empty' },
+    low:         { bg: '#FFEDD5', fg: '#9A3412', label: 'low' },
+    reserved_all:{ bg: '#FFF7ED', fg: '#7C2D12', label: 'reserved_all' },
+  };
+  const s = map[status] || { bg: '#E5E7EB', fg: '#374151', label: status || '—' };
+  return (
+    <span style={{
+      background: s.bg, color: s.fg, borderRadius: 999, padding: '2px 8px',
+      fontSize: 12, fontWeight: 600
+    }}>
+      {s.label}
+    </span>
+  );
+}
+
+function computeAutoStatus(item) {
+  const qty = Number(item.quantity || 0);
+  const res = Number(item.reservedQuantity || 0);
+  const avail = Math.max(0, qty - res);
+  if (qty === 0) return 'empty';
+  if (avail === 0) return 'reserved_all';
+  if (item.flowStatus === 'in_transit') return 'in_transit';
+  if (item.flowStatus === 'damaged') return 'damaged';
+  const reorder = Number(item.product?.reorderPoint || 0);
+  if (reorder > 0 && avail < reorder) return 'low';
+  return 'available';
+}
+
 function toDateInputValue(d) {
   if (!d) return '';
   const dt = new Date(d);
@@ -35,7 +69,7 @@ export default function InventoryItemDetailsPage() {
         purchaseOrderNumber: data.purchaseOrderNumber || '',
         supplier: data.supplier || '',
         condition: data.condition || 'new',
-        flowStatus: data.flowStatus || 'available', // <= NOWE
+        flowStatus: data.flowStatus || 'available',
         reservedQuantity: data.reservedQuantity ?? 0,
         expiryDate: toDateInputValue(data.expiryDate),
         manufacturingDate: toDateInputValue(data.manufacturingDate),
@@ -49,10 +83,7 @@ export default function InventoryItemDetailsPage() {
     }
   };
 
-  useEffect(() => {
-    load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id]);
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, [id]);
 
   const changeDraft = (k, v) => setDraft((d) => ({ ...d, [k]: v }));
 
@@ -80,6 +111,7 @@ export default function InventoryItemDetailsPage() {
   if (!item) return <div style={{ padding: '2rem' }}>Nie znaleziono pozycji</div>;
 
   const available = (item.quantity || 0) - (item.reservedQuantity || 0);
+  const auto = computeAutoStatus(item);
 
   return (
     <div style={{ padding: '2rem', maxWidth: 980 }}>
@@ -108,9 +140,7 @@ export default function InventoryItemDetailsPage() {
             <label>Lokalizacja</label>
             {edit ? (
               <input value={draft.location} onChange={(e) => changeDraft('location', e.target.value)} />
-            ) : (
-              <div>{item.location || '—'}</div>
-            )}
+            ) : (<div>{item.location || '—'}</div>)}
           </div>
 
           <div>
@@ -126,25 +156,34 @@ export default function InventoryItemDetailsPage() {
                 <option value="damaged">Uszkodzony</option>
                 <option value="expired">Przeterminowany</option>
               </select>
-            ) : (
-              <div>{item.condition || '—'}</div>
-            )}
+            ) : (<div>{item.condition || '—'}</div>)}
           </div>
 
           <div>
             <label>Status (przepływ)</label>
             {edit ? (
-              <select
-                value={draft.flowStatus}
-                onChange={(e) => changeDraft('flowStatus', e.target.value)}
-              >
-                <option value="available">available</option>
-                <option value="in_transit">in_transit</option>
-                <option value="reserved">reserved</option>
-                <option value="damaged">damaged</option>
-              </select>
+              <>
+                <select
+                  value={draft.flowStatus}
+                  onChange={(e) => changeDraft('flowStatus', e.target.value)}
+                >
+                  <option value="available">available</option>
+                  <option value="in_transit">in_transit</option>
+                  <option value="damaged">damaged</option>
+                </select>
+                <div style={{ marginTop: 6, fontSize: 12, color: '#6b7280' }}>
+                  auto teraz: <FlowBadge status={computeAutoStatus({ ...item, ...draft })} />
+                </div>
+              </>
             ) : (
-              <div>{item.flowStatus || 'available'}</div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <FlowBadge status={auto} />
+                {auto !== item.flowStatus && (
+                  <span style={{ fontSize: 12, color: '#6b7280' }}>
+                    ({item.flowStatus})
+                  </span>
+                )}
+              </div>
             )}
           </div>
 
@@ -163,9 +202,7 @@ export default function InventoryItemDetailsPage() {
                 value={draft.reservedQuantity}
                 onChange={(e) => changeDraft('reservedQuantity', e.target.value)}
               />
-            ) : (
-              <div>{item.reservedQuantity}</div>
-            )}
+            ) : (<div>{item.reservedQuantity}</div>)}
           </div>
 
           <div>
@@ -180,9 +217,7 @@ export default function InventoryItemDetailsPage() {
                 value={draft.batchNumber}
                 onChange={(e) => changeDraft('batchNumber', e.target.value)}
               />
-            ) : (
-              <div>{item.batchNumber || '—'}</div>
-            )}
+            ) : (<div>{item.batchNumber || '—'}</div>)}
           </div>
 
           <div>
@@ -192,18 +227,14 @@ export default function InventoryItemDetailsPage() {
                 value={draft.purchaseOrderNumber}
                 onChange={(e) => changeDraft('purchaseOrderNumber', e.target.value)}
               />
-            ) : (
-              <div>{item.purchaseOrderNumber || '—'}</div>
-            )}
+            ) : (<div>{item.purchaseOrderNumber || '—'}</div>)}
           </div>
 
           <div>
             <label>Dostawca</label>
             {edit ? (
               <input value={draft.supplier} onChange={(e) => changeDraft('supplier', e.target.value)} />
-            ) : (
-              <div>{item.supplier || '—'}</div>
-            )}
+            ) : (<div>{item.supplier || '—'}</div>)}
           </div>
 
           <div>

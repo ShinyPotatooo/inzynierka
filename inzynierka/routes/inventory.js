@@ -1,18 +1,24 @@
+// routes/inventory.js
 const express = require('express');
 const router = express.Router();
 const { Op, literal } = require('sequelize');
 const { InventoryItem, InventoryOperation, Product, User } = require('../models');
 const { recomputeAndNotifyLowStock } = require('../utils/lowStock');
 
-const FLOW_STATUSES = ['available', 'in_transit', 'reserved', 'damaged'];
-const isValidFlowStatus = (v) => typeof v === 'string' && FLOW_STATUSES.includes(v);
+// Do filtrowania możemy nadal przyjąć 'reserved' (stare rekordy, raporty itd.)
+const FLOW_STATUSES_ALL   = ['available', 'in_transit', 'reserved', 'damaged'];
+// Do ZAPISU (POST/PUT) wykluczamy 'reserved' – nakłada się automatycznie (reserved_all)
+const FLOW_STATUSES_WRITE = ['available', 'in_transit', 'damaged'];
+
+const isValidFlowStatusAny   = (v) => typeof v === 'string' && FLOW_STATUSES_ALL.includes(v);
+const isValidFlowStatusWrite = (v) => typeof v === 'string' && FLOW_STATUSES_WRITE.includes(v);
 
 /* ===========================
    Helpers
 =========================== */
 function todayIsoDate() {
   const d = new Date();
-  return d.toISOString().slice(0, 10); // YYYY-MM-DD
+  return d.toISOString().slice(0, 10);
 }
 
 // BATCH-YYYY-<seq per product>
@@ -44,7 +50,7 @@ router.get('/', async (req, res) => {
       condition,
       supplier,
       lowStock = false,
-      flowStatus, // <= NOWE
+      flowStatus, // filtr – akceptujemy także 'reserved' (czytanie)
     } = req.query;
 
     const offset = (Number(page) - 1) * Number(limit);
@@ -57,7 +63,7 @@ router.get('/', async (req, res) => {
     if (String(lowStock) === 'true') {
       where.quantity = { [Op.lte]: literal('"product"."minStockLevel"') };
     }
-    if (flowStatus && isValidFlowStatus(flowStatus)) {
+    if (flowStatus && isValidFlowStatusAny(flowStatus)) {
       where.flowStatus = flowStatus;
     }
 
@@ -251,8 +257,8 @@ router.post('/', async (req, res) => {
       purchaseOrderNumber,
       condition = 'new',
       notes,
-      lastUpdatedBy, // z JWT; fallback niżej
-      flowStatus = 'available', // <= NOWE
+      lastUpdatedBy,
+      flowStatus = 'available', // dozwolone: available | in_transit | damaged
     } = req.body;
 
     if (!productId || !location || !quantity) {
@@ -261,7 +267,7 @@ router.post('/', async (req, res) => {
         error: 'Product ID, location, and quantity are required',
       });
     }
-    if (flowStatus && !isValidFlowStatus(flowStatus)) {
+    if (flowStatus && !isValidFlowStatusWrite(flowStatus)) {
       return res.status(400).json({ success: false, error: 'Invalid flowStatus' });
     }
 
@@ -289,10 +295,9 @@ router.post('/', async (req, res) => {
       condition,
       notes: ensuredNotes,
       lastUpdatedBy: userId,
-      flowStatus, // <= NOWE
+      flowStatus,
     });
 
-    // log operacji "in"
     await InventoryOperation.create({
       inventoryItemId: item.id,
       productId,
@@ -330,7 +335,7 @@ router.put('/:id', async (req, res) => {
     const prevQty = item.quantity;
 
     const update = { ...req.body };
-    if (update.flowStatus && !isValidFlowStatus(update.flowStatus)) {
+    if (update.flowStatus && !isValidFlowStatusWrite(update.flowStatus)) {
       return res.status(400).json({ success: false, error: 'Invalid flowStatus' });
     }
 
@@ -343,7 +348,7 @@ router.put('/:id', async (req, res) => {
     await item.update(update);
 
     if (update.quantity != null && update.quantity !== prevQty) {
-      const delta = update.quantity - prevQty; // + lub -
+      const delta = update.quantity - prevQty;
       await InventoryOperation.create({
         inventoryItemId: item.id,
         productId: item.productId,
@@ -426,16 +431,12 @@ router.post('/operations', async (req, res) => {
     const quantityBefore = item.quantity;
     const available = Math.max(0, (item.quantity || 0) - (item.reservedQuantity || 0));
 
-    // DODATKOWE REGUŁY wg flowStatus
     if (operationType === 'out') {
       if (item.flowStatus === 'damaged') {
         return res.status(400).json({ success: false, error: 'Item is damaged — issuing is blocked' });
       }
       if (item.flowStatus === 'in_transit') {
         return res.status(400).json({ success: false, error: 'Item is in transit — receive first or mark as available' });
-      }
-      if (item.flowStatus === 'reserved' && q > (item.reservedQuantity || 0)) {
-        return res.status(400).json({ success: false, error: 'Reserved item — cannot issue more than reserved quantity' });
       }
       if (q > available) {
         return res.status(400).json({ success: false, error: 'Insufficient available quantity' });
@@ -471,7 +472,7 @@ router.post('/operations', async (req, res) => {
 });
 
 /* ===========================
-   (opcjonalnie) Ręczny trigger do testów
+   (opcjonalnie) Ręczny trigger
 =========================== */
 router.post('/alerts/recompute', async (req, res) => {
   try {

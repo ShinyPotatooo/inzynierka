@@ -2,94 +2,68 @@ const { DataTypes } = require('sequelize');
 
 module.exports = (sequelize) => {
   const InventoryItem = sequelize.define('InventoryItem', {
-    id: {
-      type: DataTypes.INTEGER,
-      primaryKey: true,
-      autoIncrement: true
-    },
+    id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+
     productId: {
       type: DataTypes.INTEGER,
       allowNull: false,
-      references: {
-        model: 'products',
-        key: 'id'
-      }
+      references: { model: 'products', key: 'id' }
     },
+
     location: {
       type: DataTypes.STRING(50),
       allowNull: false,
       defaultValue: 'A1-01-01'
     },
+
     quantity: {
       type: DataTypes.INTEGER,
       allowNull: false,
       defaultValue: 0,
       validate: { min: 0 }
     },
+
     reservedQuantity: {
       type: DataTypes.INTEGER,
       allowNull: false,
       defaultValue: 0,
       validate: { min: 0 }
     },
+
     availableQuantity: {
       type: DataTypes.VIRTUAL,
-      get() {
-        return this.quantity - this.reservedQuantity;
-      }
+      get() { return (this.quantity || 0) - (this.reservedQuantity || 0); }
     },
 
-    /* === NOWE: status przepływu pozycji === */
+    // (jeśli masz już flowStatus – zostawiamy bez zmian)
     flowStatus: {
       type: DataTypes.ENUM('available', 'in_transit', 'damaged', 'reserved'),
       allowNull: false,
       defaultValue: 'available'
     },
 
-    batchNumber: {
-      type: DataTypes.STRING(50),
-      allowNull: true
-    },
-    expiryDate: {
-      type: DataTypes.DATE,
-      allowNull: true
-    },
-    manufacturingDate: {
-      type: DataTypes.DATE,
-      allowNull: true
-    },
-    supplier: {
-      type: DataTypes.STRING(100),
-      allowNull: true
-    },
-    purchaseOrderNumber: {
-      type: DataTypes.STRING(50),
-      allowNull: true
-    },
+    batchNumber: { type: DataTypes.STRING(50), allowNull: true },
+    expiryDate: { type: DataTypes.DATE, allowNull: true },
+    manufacturingDate: { type: DataTypes.DATE, allowNull: true },
+    supplier: { type: DataTypes.STRING(100), allowNull: true },
+    purchaseOrderNumber: { type: DataTypes.STRING(50), allowNull: true },
+
     condition: {
       type: DataTypes.ENUM('new', 'good', 'fair', 'damaged', 'expired'),
       allowNull: false,
       defaultValue: 'new'
     },
-    notes: {
-      type: DataTypes.TEXT,
-      allowNull: true
-    },
+
+    notes: { type: DataTypes.TEXT, allowNull: true },
+
     lastUpdatedBy: {
       type: DataTypes.INTEGER,
       allowNull: true,
       references: { model: 'users', key: 'id' }
     },
-    createdAt: {
-      type: DataTypes.DATE,
-      allowNull: false,
-      defaultValue: DataTypes.NOW
-    },
-    updatedAt: {
-      type: DataTypes.DATE,
-      allowNull: false,
-      defaultValue: DataTypes.NOW
-    }
+
+    createdAt: { type: DataTypes.DATE, allowNull: false, defaultValue: DataTypes.NOW },
+    updatedAt: { type: DataTypes.DATE, allowNull: false, defaultValue: DataTypes.NOW }
   }, {
     tableName: 'inventory_items',
     timestamps: true,
@@ -99,31 +73,27 @@ module.exports = (sequelize) => {
       { fields: ['batchNumber'] },
       { fields: ['expiryDate'] },
       { fields: ['condition'] },
-      { fields: ['flowStatus'] },   // <— indeks po statusie przepływu
+      { fields: ['flowStatus'] },
       { fields: ['lastUpdatedBy'] }
-    ]
+    ],
+    validate: {
+      reservedNotAboveQuantity() {
+        const q = Number(this.quantity || 0);
+        const r = Number(this.reservedQuantity || 0);
+        if (r > q) {
+          throw new Error('reservedQuantity cannot be greater than quantity');
+        }
+      }
+    }
   });
 
   InventoryItem.associate = (models) => {
-    InventoryItem.belongsTo(models.Product, {
-      foreignKey: 'productId',
-      as: 'product'
-    });
-
-    InventoryItem.belongsTo(models.User, {
-      foreignKey: 'lastUpdatedBy',
-      as: 'lastUpdatedByUser'
-    });
-
-    InventoryItem.hasMany(models.InventoryOperation, {
-      foreignKey: 'inventoryItemId',
-      as: 'inventoryOperations'
-    });
+    InventoryItem.belongsTo(models.Product, { foreignKey: 'productId', as: 'product' });
+    InventoryItem.belongsTo(models.User, { foreignKey: 'lastUpdatedBy', as: 'lastUpdatedByUser' });
+    InventoryItem.hasMany(models.InventoryOperation, { foreignKey: 'inventoryItemId', as: 'inventoryOperations' });
   };
 
-  /** ------------------------------
-   *  HOOKI: automatyczny alert low-stock
-   *  ------------------------------ */
+  /** -------- Low-stock hook (jak było) -------- */
   async function ensureLowStockAlertFor(item) {
     try {
       const { Product, InventoryItem, Notification } = sequelize.models;
@@ -156,46 +126,28 @@ module.exports = (sequelize) => {
         if (!existing) {
           await Notification.create({
             type: 'low_stock',
-            title,
-            message,
+            title, message,
             productId: product.id,
             userId: null,
             targetRole: 'manager',
             isRead: false,
             isSent: false,
             priority: 'high',
-            scheduledAt: null,
-            sentAt: null,
-            readAt: null,
-            metadata: {
-              productId: product.id,
-              sku: product.sku,
-              productName: product.name,
-              available,
-              reorder
-            }
+            metadata: { productId: product.id, sku: product.sku, productName: product.name, available, reorder }
           });
         } else {
-          try {
-            existing.title = title;
-            existing.message = message;
-            existing.metadata = {
-              ...(existing.metadata || {}),
-              productId: product.id,
-              sku: product.sku,
-              productName: product.name,
-              available,
-              reorder,
-              updatedAt: new Date().toISOString()
-            };
-            await existing.save();
-          } catch (_) {}
+          existing.title = title;
+          existing.message = message;
+          existing.metadata = {
+            ...(existing.metadata || {}),
+            productId: product.id, sku: product.sku, productName: product.name, available, reorder,
+            updatedAt: new Date().toISOString(),
+          };
+          await existing.save();
         }
       }
     } catch (e) {
-      if (process.env.NODE_ENV !== 'production') {
-        console.error('[low-stock hook] error:', e?.message || e);
-      }
+      if (process.env.NODE_ENV !== 'production') console.error('[low-stock hook] error:', e?.message || e);
     }
   }
 
