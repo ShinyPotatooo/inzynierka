@@ -5,6 +5,7 @@ import { toast } from 'react-toastify';
 import { AuthContext } from '../context/AuthContext';
 import { getProductOptions } from '../services/products';
 import { createInventoryItem } from '../services/inventory';
+import LocationSelect from '../components/Inventory/LocationSelect';
 
 const DEBOUNCE_MS = 300;
 
@@ -27,7 +28,7 @@ export default function InventoryItemFormPage() {
   const [fetching, setFetching] = useState(false);
 
   // OTHER FIELDS
-  const [location, setLocation] = useState('');
+  const [location, setLocation] = useState(''); // <- via LocationSelect
   const [quantity, setQuantity] = useState('');
   const [reservedQuantity, setReservedQuantity] = useState('');
   const [condition, setCondition] = useState('new');
@@ -41,6 +42,7 @@ export default function InventoryItemFormPage() {
 
   const delayer = useRef(null);
 
+  /** Lokalne dopasowanie */
   const tryLocal = useCallback((value, list = []) => {
     const n = normalize(value);
     const exact = list.find(o => normalize(o.label) === n);
@@ -55,6 +57,7 @@ export default function InventoryItemFormPage() {
     return null;
   }, []);
 
+  /** 1) Ładowanie propozycji (po wpisie) */
   useEffect(() => {
     const q = productQuery.trim();
     if (delayer.current) clearTimeout(delayer.current);
@@ -114,6 +117,7 @@ export default function InventoryItemFormPage() {
     setProductId(local);
   };
 
+  /** SUBMIT */
   const onSubmit = async (e) => {
     e.preventDefault();
     if (!productId) await finalizeProductChoice();
@@ -122,8 +126,8 @@ export default function InventoryItemFormPage() {
       toast.warning('Wybierz produkt z listy');
       return;
     }
-    if (!location.trim()) {
-      toast.error('Lokalizacja jest wymagana');
+    if (!location) {
+      toast.error('Wybierz lokalizację ze słownika');
       return;
     }
     const qty = Number(quantity);
@@ -135,7 +139,7 @@ export default function InventoryItemFormPage() {
     try {
       const payload = {
         productId,
-        location: location.trim(),
+        location, // <- nazwa ze słownika
         quantity: qty,
         reservedQuantity: reservedQuantity ? Number(reservedQuantity) : 0,
         condition,
@@ -168,6 +172,7 @@ export default function InventoryItemFormPage() {
 
       <div className="inv-card">
         <form onSubmit={onSubmit} className="form-grid">
+          {/* LEWA KOLUMNA */}
           <div className="field">
             <label>Produkt (nazwa / SKU)</label>
             <input
@@ -200,11 +205,7 @@ export default function InventoryItemFormPage() {
 
           <div className="field">
             <label>Lokalizacja</label>
-            <input
-              value={location}
-              onChange={(e) => setLocation(e.target.value)}
-              placeholder="np. A1-01-20"
-            />
+            <LocationSelect value={location} onChange={setLocation} required />
           </div>
 
           <div className="field">
@@ -225,6 +226,9 @@ export default function InventoryItemFormPage() {
               <option value="in_transit">in_transit</option>
               <option value="damaged">damaged</option>
             </select>
+            <small style={{ color:'#6b7280' }}>
+              „reserved” ustawia się automatycznie (gdy dostępna = 0 i wszystko zarezerwowane).
+            </small>
           </div>
 
           <div className="field">

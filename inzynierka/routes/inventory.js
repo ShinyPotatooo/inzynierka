@@ -1,13 +1,12 @@
-// routes/inventory.js
 const express = require('express');
 const router = express.Router();
-const { Op, literal } = require('sequelize');
-const { InventoryItem, InventoryOperation, Product, User } = require('../models');
+const { Op, literal, fn, col } = require('sequelize');
+const { sequelize, InventoryItem, InventoryOperation, Product, User, Location } = require('../models');
 const { recomputeAndNotifyLowStock } = require('../utils/lowStock');
 
-// Do filtrowania możemy nadal przyjąć 'reserved' (stare rekordy, raporty itd.)
+// Do filtrowania czytamy wszystko (w tym stare 'reserved')
 const FLOW_STATUSES_ALL   = ['available', 'in_transit', 'reserved', 'damaged'];
-// Do ZAPISU (POST/PUT) wykluczamy 'reserved' – nakłada się automatycznie (reserved_all)
+// Do zapisu (POST/PUT) tylko te:
 const FLOW_STATUSES_WRITE = ['available', 'in_transit', 'damaged'];
 
 const isValidFlowStatusAny   = (v) => typeof v === 'string' && FLOW_STATUSES_ALL.includes(v);
@@ -19,6 +18,15 @@ const isValidFlowStatusWrite = (v) => typeof v === 'string' && FLOW_STATUSES_WRI
 function todayIsoDate() {
   const d = new Date();
   return d.toISOString().slice(0, 10);
+}
+
+// case-insensitive sprawdzenie istnienia lokalizacji w słowniku
+async function locationExistsCI(name = '') {
+  if (!name || typeof name !== 'string') return false;
+  const row = await Location.findOne({
+    where: sequelize.where(fn('LOWER', col('name')), name.toLowerCase()),
+  });
+  return !!row;
 }
 
 // BATCH-YYYY-<seq per product>
@@ -50,7 +58,7 @@ router.get('/', async (req, res) => {
       condition,
       supplier,
       lowStock = false,
-      flowStatus, // filtr – akceptujemy także 'reserved' (czytanie)
+      flowStatus,
     } = req.query;
 
     const offset = (Number(page) - 1) * Number(limit);
@@ -258,7 +266,7 @@ router.post('/', async (req, res) => {
       condition = 'new',
       notes,
       lastUpdatedBy,
-      flowStatus = 'available', // dozwolone: available | in_transit | damaged
+      flowStatus = 'available', // available | in_transit | damaged
     } = req.body;
 
     if (!productId || !location || !quantity) {
@@ -269,6 +277,11 @@ router.post('/', async (req, res) => {
     }
     if (flowStatus && !isValidFlowStatusWrite(flowStatus)) {
       return res.status(400).json({ success: false, error: 'Invalid flowStatus' });
+    }
+
+    // WALIDACJA: lokalizacja musi istnieć w słowniku
+    if (!(await locationExistsCI(location))) {
+      return res.status(400).json({ success: false, error: 'Location not found in dictionary' });
     }
 
     const product = await Product.findByPk(productId);
@@ -337,6 +350,14 @@ router.put('/:id', async (req, res) => {
     const update = { ...req.body };
     if (update.flowStatus && !isValidFlowStatusWrite(update.flowStatus)) {
       return res.status(400).json({ success: false, error: 'Invalid flowStatus' });
+    }
+
+    // WALIDACJA: jeśli zmieniamy lokalizację — musi istnieć w słowniku
+    if (update.location != null) {
+      const ok = await locationExistsCI(String(update.location));
+      if (!ok) {
+        return res.status(400).json({ success: false, error: 'Location not found in dictionary' });
+      }
     }
 
     if (update.quantity != null) update.quantity = parseInt(update.quantity, 10);
