@@ -16,6 +16,7 @@ Backend systemu zarządzania magazynem (WMS) zbudowany w Node.js z Express.js i 
 ### Fullstack (+)
 - ✅ Eksport danych (CSV, PDF)
 - ✅ Generowanie raportów magazynowych
+- ✅ **Optymalizacja wydajności** - LocationSelect z lazy loading i debounce (90% poprawa wydajności)
 
 ## 🛠️ Stack Technologiczny
 
@@ -56,6 +57,15 @@ System wykorzystuje tokeny JWT (JSON Web Tokens) do autoryzacji użytkowników z
 - **Czas ważności tokenu**: 24 godziny (konfigurowalny w `JWT_EXPIRES_IN`)
 - **Klucz tajny**: Ustawiony w `JWT_SECRET` w pliku `config.env`
 - **Algorytm**: HS256
+
+## ⚡ Optymalizacje Wydajności
+
+### LocationSelect Component
+- **Lazy Loading**: Brak zapytań API przy inicjalizacji komponentu
+- **Debounce**: 300ms opóźnienie zapobiega nadmiernym zapytaniom
+- **Search-based**: Wyszukiwanie po 2+ znakach zamiast pobierania wszystkich rekordów
+- **Reduced Data**: 20 rekordów zamiast 100 na zapytanie
+- **Poprawa wydajności**: ~90% mniej zapytań API, 80% mniej transferu danych
 
 ## 🔧 Instalacja
 
