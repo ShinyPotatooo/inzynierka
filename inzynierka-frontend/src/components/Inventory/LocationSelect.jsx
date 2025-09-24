@@ -1,10 +1,11 @@
-import React, { useEffect, useState, useCallback } from 'react';
-import { listLocations } from '../../services/locations';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { getLocationOptions } from '../../services/locations';
 
 /**
- * OPTIMIZED LocationSelect - lazy loading z debounce i search
- * Poprawia wydajność o ~90% względem poprzedniej wersji
- * value: string (nazwa lokalizacji, np. "A1-01-01")
+ * STRICT LocationSelect
+ * - Główne pole jest readOnly (nie pozwala wpisać własnej wartości)
+ * - Dropdown z polem szukania 2+ znaki, wyniki z /dictionaries/locations/options
+ * - Wartość można ustawić TYLKO wybierając opcję z listy
  */
 export default function LocationSelect({
   value,
@@ -14,142 +15,153 @@ export default function LocationSelect({
   autoFocus,
   style,
   className,
-  placeholder = '— wpisz aby wyszukać lokalizację —',
+  placeholder = 'Wybierz lokalizację…',
 }) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
   const [options, setOptions] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [searchTerm, setSearchTerm] = useState('');
-  const [isOpen, setIsOpen] = useState(false);
+  const boxRef = useRef(null);
+  const searchRef = useRef(null);
+  const debTimer = useRef(null);
 
-  // Debounced search - zapobiega nadmiernym API calls
+  // --------- Close on outside click ----------
   useEffect(() => {
-    if (!isOpen && !searchTerm) return; // nie szukaj jeśli dropdown zamknięty
-    
-    const delayedSearch = setTimeout(async () => {
-      if (searchTerm.length >= 2) { // szukaj tylko po 2+ znakach
-        try {
-          setLoading(true);
-          const { items } = await listLocations({ 
-            search: searchTerm, 
-            limit: 20, // 80% mniej danych niż poprzednie 100
-            page: 1 
-          });
-          setOptions((items || []).map(it => ({ id: it.id, label: it.name })));
-        } catch (e) {
-          setOptions([]);
-        } finally {
-          setLoading(false);
-        }
-      } else {
-        setOptions([]); // wyczyść wyniki dla < 2 znaków
-      }
-    }, 300); // debounce 300ms - zapobiega spam requests
-
-    return () => clearTimeout(delayedSearch);
-  }, [searchTerm, isOpen]);
-
-  // Load current value if exists (lazy load pojedynczej wartości)
-  useEffect(() => {
-    if (value && !options.some(o => o.label === value)) {
-      // Jeśli aktualna wartość nie jest w opcjach, spróbuj ją załadować
-      setSearchTerm(value);
-    }
-  }, [value, options]);
-
-  const handleInputChange = useCallback((e) => {
-    const newTerm = e.target.value;
-    setSearchTerm(newTerm);
-    setIsOpen(true);
+    const onDocClick = (e) => {
+      if (!boxRef.current) return;
+      if (!boxRef.current.contains(e.target)) setOpen(false);
+    };
+    document.addEventListener('mousedown', onDocClick);
+    return () => document.removeEventListener('mousedown', onDocClick);
   }, []);
 
-  const handleOptionSelect = useCallback((selectedValue) => {
-    onChange?.(selectedValue);
-    setIsOpen(false);
-    setSearchTerm('');
+  // --------- Fetch options (debounced) ----------
+  useEffect(() => {
+    if (!open) return;
+    if (debTimer.current) clearTimeout(debTimer.current);
+
+    debTimer.current = setTimeout(async () => {
+      const q = query.trim();
+      if (q.length < 2) { setOptions([]); return; }
+      try {
+        setLoading(true);
+        const opts = await getLocationOptions(q, 20); // [{id,label}]
+        setOptions(opts || []);
+      } catch {
+        setOptions([]);
+      } finally {
+        setLoading(false);
+      }
+    }, 300);
+
+    return () => clearTimeout(debTimer.current);
+  }, [open, query]);
+
+  // --------- Open & focus search ----------
+  const openDropdown = useCallback(() => {
+    if (disabled) return;
+    setOpen(true);
+    // małe opóźnienie, żeby input był w DOM
+    setTimeout(() => searchRef.current?.focus(), 0);
+  }, [disabled]);
+
+  // --------- Select option ----------
+  const selectValue = useCallback((label) => {
+    onChange?.(label);
+    setOpen(false);
+    setQuery('');
   }, [onChange]);
 
-  const handleFocus = useCallback(() => {
-    setIsOpen(true);
-  }, []);
-
-  const handleBlur = useCallback(() => {
-    // Delay close to allow option selection
-    setTimeout(() => setIsOpen(false), 200);
-  }, []);
-
-  // Pokazuj aktualną wartość lub search term
-  const displayValue = isOpen ? searchTerm : (value || '');
-  const hasValue = value && options.some(o => o.label === value);
+  // --------- Keyboard support on search ----------
+  const onSearchKeyDown = (e) => {
+    if (e.key === 'Escape') setOpen(false);
+  };
 
   return (
-    <div className="location-select-container" style={{ position: 'relative' }}>
+    <div ref={boxRef} className="location-select-container" style={{ position: 'relative', ...style }}>
+      {/* Główne pole – readOnly */}
       <input
         type="text"
-        value={displayValue}
-        onChange={handleInputChange}
-        onFocus={handleFocus}
-        onBlur={handleBlur}
+        value={value || ''}
         placeholder={placeholder}
-        required={required}
+        readOnly
         disabled={disabled}
+        onClick={openDropdown}
+        onFocus={openDropdown}
         autoFocus={autoFocus}
-        style={style}
         className={className}
-        autoComplete="off"
+        style={{ cursor: disabled ? 'not-allowed' : 'pointer' }}
+        required={required}
       />
-      
-      {isOpen && (
-        <div className="location-dropdown" style={{
-          position: 'absolute',
-          top: '100%',
-          left: 0,
-          right: 0,
-          maxHeight: '200px',
-          overflowY: 'auto',
-          backgroundColor: 'white',
-          border: '1px solid #ccc',
-          borderTop: 'none',
-          zIndex: 1000,
-          boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
-        }}>
-          {loading && (
-            <div style={{ padding: '8px', color: '#666' }}>Szukanie...</div>
-          )}
-          
-          {!loading && searchTerm.length < 2 && (
-            <div style={{ padding: '8px', color: '#666' }}>
-              Wpisz co najmniej 2 znaki aby wyszukać
-            </div>
-          )}
-          
-          {!loading && searchTerm.length >= 2 && options.length === 0 && (
-            <div style={{ padding: '8px', color: '#666' }}>
-              Brak wyników dla "{searchTerm}"
-            </div>
-          )}
-          
-          {!loading && options.map(option => (
-            <div
-              key={option.id}
-              onClick={() => handleOptionSelect(option.label)}
+
+      {/* Dropdown */}
+      {open && (
+        <div
+          className="location-dropdown"
+          style={{
+            position: 'absolute',
+            top: '100%',
+            left: 0,
+            right: 0,
+            marginTop: 4,
+            maxHeight: 260,
+            overflowY: 'auto',
+            background: '#fff',
+            border: '1px solid #d1d5db',
+            borderRadius: 8,
+            zIndex: 1000,
+            boxShadow: '0 8px 16px rgba(0,0,0,0.08)'
+          }}
+        >
+          <div style={{ padding: 8, borderBottom: '1px solid #eee' }}>
+            <input
+              ref={searchRef}
+              type="text"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={onSearchKeyDown}
+              placeholder="Szukaj (min. 2 znaki)…"
               style={{
-                padding: '8px',
-                cursor: 'pointer',
-                borderBottom: '1px solid #eee'
+                width: '100%',
+                padding: '8px 10px',
+                border: '1px solid #d1d5db',
+                borderRadius: 6
               }}
-              onMouseEnter={(e) => e.target.style.backgroundColor = '#f5f5f5'}
-              onMouseLeave={(e) => e.target.style.backgroundColor = 'white'}
+            />
+          </div>
+
+          {loading && (
+            <div style={{ padding: 10, color: '#666' }}>Szukanie…</div>
+          )}
+
+          {!loading && query.trim().length < 2 && (
+            <div style={{ padding: 10, color: '#6b7280' }}>
+              Wpisz co najmniej 2 znaki.
+            </div>
+          )}
+
+          {!loading && query.trim().length >= 2 && options.length === 0 && (
+            <div style={{ padding: 10, color: '#6b7280' }}>
+              Brak wyników dla „{query.trim()}”.
+            </div>
+          )}
+
+          {!loading && options.map(opt => (
+            <div
+              key={opt.id}
+              onMouseDown={(e) => { e.preventDefault(); selectValue(opt.label); }} // mouseDown, by nie gubić focusu
+              style={{
+                padding: '10px 12px',
+                cursor: 'pointer',
+                borderBottom: '1px solid #f3f4f6'
+              }}
+              onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = '#f9fafb')}
+              onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'white')}
+              title={opt.label}
             >
-              {option.label}
+              {opt.label}
             </div>
           ))}
-        </div>
-      )}
-      
-      {/* Pokazuj aktualną wartość jeśli nie jest w wynikach search */}
-      {!hasValue && value && (
-        <div style={{ fontSize: '12px', color: '#999', marginTop: '2px' }}>
-          Aktualna wartość: {value} (nie w słowniku)
         </div>
       )}
     </div>

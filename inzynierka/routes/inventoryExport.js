@@ -1,3 +1,4 @@
+// routes/inventoryExport.js
 const express = require('express');
 const router = express.Router();
 const path = require('path');
@@ -65,10 +66,17 @@ function quoteTableName(model) {
   return schema ? `${q(schema)}.${q(tableName)}` : q(tableName);
 }
 
+function orderBySql(sort) {
+  // Lp magazynowe = kolejność po ID jak na liście
+  if (sort === 'idDesc') return `i."id" DESC`;
+  return `i."id" ASC`;
+}
+
 async function runQuery(query, { logLabel } = {}) {
   const itemsTable = quoteTableName(InventoryItem);
   const productsTable = quoteTableName(Product);
   const { whereSql, params } = buildWhereAndParams(query);
+  const orderSql = orderBySql(String(query.sort || 'idAsc'));
 
   const sql = `
     SELECT
@@ -93,7 +101,7 @@ async function runQuery(query, { logLabel } = {}) {
     FROM ${itemsTable} AS i
     JOIN ${productsTable} AS p ON p."id" = i."productId"
     ${whereSql}
-    ORDER BY i."createdAt" DESC
+    ORDER BY ${orderSql}
   `;
 
   try {
@@ -102,17 +110,27 @@ async function runQuery(query, { logLabel } = {}) {
       replacements: params,
     });
 
-    return rows.map(r => ({
-      ...r,
-      price: r.price == null ? null : Number(r.price),
-      min: r.min == null ? null : Number(r.min),
-      reorder: r.reorder == null ? null : Number(r.reorder),
-      max: r.max == null ? null : Number(r.max),
-      stock: Number(r.stock || 0),
-      reserved: Number(r.reserved || 0),
-      available: Number(r.available || 0),
-      flow: r.flow || 'available',
-    }));
+    // auto (low/empty) jak w UI
+    return rows.map(r => {
+      const min = Number(r.reorder ?? r.min ?? 0) || 0;
+      const avail = Number(r.available || 0);
+      let auto = '';
+      if (avail <= 0) auto = 'empty';
+      else if (min > 0 && avail <= min) auto = 'low';
+
+      return {
+        ...r,
+        price: r.price == null ? null : Number(r.price),
+        min: r.min == null ? null : Number(r.min),
+        reorder: r.reorder == null ? null : Number(r.reorder),
+        max: r.max == null ? null : Number(r.max),
+        stock: Number(r.stock || 0),
+        reserved: Number(r.reserved || 0),
+        available: Number(r.available || 0),
+        flow: r.flow ?? 'available',
+        auto,
+      };
+    });
   } catch (err) {
     console.error(`\n[${logLabel || 'inventoryExport'}] RAW SQL ERROR`);
     console.error('Dialect:', sequelize.getDialect());
@@ -140,9 +158,20 @@ function registerFonts(doc) {
   };
 }
 
+function fitColumnsToPage(cols, doc, gapX = 8) {
+  const available = doc.page.width - doc.page.margins.left - doc.page.margins.right;
+  const sumWidths = cols.reduce((s, c) => s + c.width, 0);
+  const total = sumWidths + gapX * (cols.length - 1);
+  if (total <= available) return cols;
+  const scale = (available - gapX * (cols.length - 1)) / sumWidths;
+  return cols.map(c => ({ ...c, width: Math.max(24, Math.floor(c.width * scale)) }));
+}
+
 function drawTable(doc, cols, rows, opts = {}) {
   const padY = opts.padY ?? 4;
   const gapX = opts.gapX ?? 8;
+
+  cols = fitColumnsToPage(cols, doc, gapX);
 
   let x0 = doc.page.margins.left;
   let y  = opts.startY ?? doc.y;
@@ -216,7 +245,8 @@ function drawTable(doc, cols, rows, opts = {}) {
 router.get('/export.debug', async (req, res) => {
   try {
     const rows = await runQuery(req.query, { logLabel: 'inventoryExport.debug' });
-    res.json({ success: true, count: rows.length, rows });
+    const withLp = rows.map((r, idx) => ({ lp: idx + 1, ...r }));
+    res.json({ success: true, count: withLp.length, rows: withLp });
   } catch (err) {
     const msg = isDev ? (err?.message || 'Internal error') : 'Internal server error';
     res.status(500).json({ success: false, error: msg });
@@ -234,7 +264,8 @@ router.get('/export.csv', async (req, res) => {
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
 
     const header = [
-      'SKU','Nazwa','Kategoria','Przepływ','Stan','Zarezerwowane','Dostępne',
+      'Lp.',
+      'SKU','Nazwa','Kategoria','Przepływ','Auto','Stan','Zarezerwowane','Dostępne',
       'Min','Reorder','Max','ID pozycji','Utworzono','Zaktualizowano'
     ];
 
@@ -246,9 +277,10 @@ router.get('/export.csv', async (req, res) => {
 
     res.write('\uFEFF');
     res.write(header.join(';') + '\n');
-    for (const r of rows) {
+    rows.forEach((r, idx) => {
       const line = [
-        r.sku, r.name, r.category, r.flow,
+        idx + 1,
+        r.sku, r.name, r.category, r.flow, r.auto || '',
         r.stock, r.reserved, r.available,
         r.min, r.reorder, r.max,
         r.itemId,
@@ -256,7 +288,7 @@ router.get('/export.csv', async (req, res) => {
         r.updatedAt ? new Date(r.updatedAt).toISOString() : '',
       ].map(esc).join(';');
       res.write(line + '\n');
-    }
+    });
     res.end();
   } catch (err) {
     const msg = isDev ? (err?.message || 'Internal error') : 'Internal server error';
@@ -272,15 +304,16 @@ router.get('/export.pdf', async (req, res) => {
     }
     const rowsRaw = await runQuery(req.query, { logLabel: 'inventoryExport.pdf' });
 
-    const rows = rowsRaw.map(r => ({
-      ...r,
+    const rows = rowsRaw.map((r, idx) => ({
+      __lp:     idx + 1,
+      sku:      r.sku,
+      name:     r.name,
+      category: r.category,
+      flow:     r.flow ?? 'available',
+      auto:     r.auto || '',
       stock:    r.stock ?? '',
       reserved: r.reserved ?? '',
       available:r.available ?? '',
-      min:      r.min ?? '',
-      reorder:  r.reorder ?? '',
-      max:      r.max ?? '',
-      flow:     r.flow ?? 'available',
     }));
 
     const now = new Date();
@@ -301,19 +334,18 @@ router.get('/export.pdf', async (req, res) => {
     doc.moveDown(0.8);
 
     const cols = [
-      { key: 'sku',       label: 'SKU',        width: 90,  truncate: 22 },
-      { key: 'name',      label: 'Nazwa',      width: 200, truncate: 60 },
-      { key: 'category',  label: 'Kategoria',  width: 110, truncate: 26 },
-      { key: 'flow',      label: 'Przepływ',   width: 70 },
-      { key: 'stock',     label: 'Stan',       width: 40,  align: 'right' },
-      { key: 'reserved',  label: 'Zarezerw.',  width: 60,  align: 'right' },
-      { key: 'available', label: 'Dostępne',   width: 60,  align: 'right' },
-      { key: 'min',       label: 'Min',        width: 35,  align: 'right' },
-      { key: 'reorder',   label: 'Reorder',    width: 50,  align: 'right' },
-      { key: 'max',       label: 'Max',        width: 35,  align: 'right' },
+      { key: '__lp',     label: 'Lp.',        width: 28,  align: 'right' },
+      { key: 'sku',      label: 'SKU',        width: 72,  truncate: 18 },
+      { key: 'name',     label: 'Nazwa',      width: 140, truncate: 64 },
+      { key: 'category', label: 'Kategoria',  width: 70,  truncate: 26 },
+      { key: 'flow',     label: 'Przepływ',   width: 60 },
+      { key: 'auto',     label: 'Auto',       width: 36 },
+      { key: 'stock',    label: 'Stan',       width: 36,  align: 'right' },
+      { key: 'reserved', label: 'Zarez.',     width: 40,  align: 'right' },
+      { key: 'available',label: 'Dost.',      width: 44,  align: 'right' },
     ];
 
-    drawTable(doc, cols, rows, { fonts });
+    drawTable(doc, cols, rows, { fonts, gapX: 8 });
 
     const totalQty   = rowsRaw.reduce((s, r) => s + (r.stock || 0), 0);
     const totalAvail = rowsRaw.reduce((s, r) => s + (r.available || 0), 0);

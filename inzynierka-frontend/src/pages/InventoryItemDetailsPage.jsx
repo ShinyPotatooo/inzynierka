@@ -1,8 +1,9 @@
-import React, { useContext, useEffect, useState } from 'react';
+import React, { useContext, useEffect, useState, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import { AuthContext } from '../context/AuthContext';
 import { getInventoryItem, updateInventoryItem } from '../services/inventory';
+import LocationSelect from '../components/Inventory/LocationSelect';
 
 function FlowBadge({ status }) {
   const map = {
@@ -58,7 +59,8 @@ export default function InventoryItemDetailsPage() {
   const [edit, setEdit] = useState(false);
   const [draft, setDraft] = useState({});
 
-  const load = async () => {
+  // ---- FIX: wrap load in useCallback and depend on [id] ----
+  const load = useCallback(async () => {
     try {
       setLoading(true);
       const data = await getInventoryItem(id);
@@ -81,9 +83,11 @@ export default function InventoryItemDetailsPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [id]);
 
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, [id]);
+  useEffect(() => {
+    load();
+  }, [load]);
 
   const changeDraft = (k, v) => setDraft((d) => ({ ...d, [k]: v }));
 
@@ -139,7 +143,11 @@ export default function InventoryItemDetailsPage() {
           <div>
             <label>Lokalizacja</label>
             {edit ? (
-              <input value={draft.location} onChange={(e) => changeDraft('location', e.target.value)} />
+              <LocationSelect
+                value={draft.location}
+                onChange={(v) => changeDraft('location', v)}
+                required
+              />
             ) : (<div>{item.location || '—'}</div>)}
           </div>
 

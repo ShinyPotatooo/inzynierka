@@ -1,13 +1,21 @@
-import React, { useContext, useMemo, useState } from 'react';
-import PropTypes from 'prop-types';
-import { toast } from 'react-toastify';
+// src/components/Inventory/OperationModal.jsx
+import React, { useContext, useEffect, useMemo, useState } from 'react';
 import { AuthContext } from '../../context/AuthContext';
-import { createInventoryOperation } from '../../services/inventory';
+import {
+  createInventoryOperation,
+  createInventoryTransfer,
+  updateInventoryItem,
+} from '../../services/inventory';
+import LocationSelect from './LocationSelect';
+import { toast } from 'react-toastify';
 
-const pad = (n) => String(n).padStart(2, '0');
-function nowLocalInput() {
+function nowLocalDatetimeValue() {
   const d = new Date();
-  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  d.setSeconds(0, 0);
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(
+    d.getHours()
+  )}:${pad(d.getMinutes())}`;
 }
 
 export default function OperationModal({ open, type, item, onClose, onDone }) {
@@ -15,121 +23,191 @@ export default function OperationModal({ open, type, item, onClose, onDone }) {
   const userId = user?.id ?? 1;
 
   const [qty, setQty] = useState('');
-  const [date, setDate] = useState(nowLocalInput());
+  const [when, setWhen] = useState(nowLocalDatetimeValue());
   const [notes, setNotes] = useState('');
-  const [submitting, setSubmitting] = useState(false);
 
-  const title = type === 'in' ? 'Przyjęcie towaru' : 'Wydanie towaru';
-  const available = useMemo(
-    () => Math.max(0, (item?.quantity ?? 0) - (item?.reservedQuantity ?? 0)),
-    [item]
-  );
-  const reserved = item?.reservedQuantity ?? 0;
+  // transfer-only
+  const [toLocation, setToLocation] = useState('');
 
-  if (!open) return null;
+  const [saving, setSaving] = useState(false);
 
-  const submit = async (e) => {
-    e.preventDefault();
-    const q = parseInt(qty, 10);
-    if (!q || q <= 0) { toast.warn('Podaj dodatnią liczbę sztuk.'); return; }
-
-    if (type === 'out') {
-      // szybka walidacja flowStatus (backend też sprawdza)
-      if (item?.flowStatus === 'damaged') {
-        toast.error('Pozycja uszkodzona — wydanie zablokowane.');
-        return;
-      }
-      if (item?.flowStatus === 'in_transit') {
-        toast.error('Pozycja w tranzycie — najpierw przyjmij lub zmień status.');
-        return;
-      }
-      // Rezerwacje v1.5: dopuszczamy do poziomu całkowitego stanu (rezerwacja + dostępne)
-      const total = Number(item?.quantity || 0);
-      if (q > total) {
-        toast.error(`Za mało sztuk (stan całkowity: ${total}).`);
-        return;
-      }
+  useEffect(() => {
+    if (!open) {
+      setQty('');
+      setWhen(nowLocalDatetimeValue());
+      setNotes('');
+      setToLocation('');
     }
+  }, [open]);
 
+  const available = useMemo(() => {
+    if (!item) return 0;
+    return Math.max(0, (item.quantity || 0) - (item.reservedQuantity || 0));
+  }, [item]);
+
+  if (!open || !item) return null;
+
+  const titleMap = {
+    in: 'Przyjęcie towaru',
+    out: 'Wydanie towaru',
+    transfer: 'Transfer między lokalizacjami',
+    receive: 'Odbiór z tranzytu',
+  };
+  const title = titleMap[type] || 'Operacja';
+
+  const submit = async () => {
     try {
-      setSubmitting(true);
-      await createInventoryOperation({
-        inventoryItemId: item.id,
-        operationType: type,
-        quantity: q,
-        userId,
-        operationDate: date,
-        notes: notes?.trim() || (type === 'in' ? 'Przyjęcie (UI)' : 'Wydanie (UI)'),
-      });
-      if (type === 'out' && reserved > 0) {
-        toast.info('Wydanie rozliczy rezerwację w pierwszej kolejności.');
+      const q = Number(qty);
+
+      if (type === 'in' || type === 'out' || type === 'transfer') {
+        if (!q || q <= 0) {
+          toast.error('Podaj dodatnią ilość');
+          return;
+        }
       }
-      toast.success(type === 'in' ? 'Przyjęto' : 'Wydano');
-      onClose?.(); onDone?.();
-    } catch (err) {
-      console.error(err);
-      toast.error(err.message || 'Błąd operacji');
+      if (type === 'out' && q > available) {
+        toast.error('Brak dostępnej ilości do wydania');
+        return;
+      }
+
+      setSaving(true);
+
+      if (type === 'in' || type === 'out') {
+        await createInventoryOperation({
+          inventoryItemId: item.id,
+          operationType: type,
+          quantity: q,
+          userId,
+          operationDate: when,
+          notes: notes || undefined,
+        });
+        toast.success('Operacja zapisana');
+      } else if (type === 'transfer') {
+        if (!toLocation) {
+          toast.error('Wybierz lokalizację docelową');
+          setSaving(false);
+          return;
+        }
+        if (toLocation.trim().toLowerCase() === String(item.location || '').trim().toLowerCase()) {
+          toast.error('Lokalizacja docelowa nie może być taka sama');
+          setSaving(false);
+          return;
+        }
+
+        await createInventoryTransfer({
+          fromItemId: item.id,
+          toLocation,
+          quantity: q,
+          userId,
+          operationDate: when,
+          notes: notes || undefined,
+        });
+        toast.success('Transfer zarejestrowany');
+      } else if (type === 'receive') {
+        // tylko zmiana statusu z in_transit -> available (bez zmiany ilości)
+        await updateInventoryItem(item.id, {
+          flowStatus: 'available',
+          lastUpdatedBy: userId,
+          operationDate: when, // backend użyje tego do logu
+          notes: notes || undefined,
+        });
+        toast.success('Odebrano z tranzytu');
+      } else {
+        toast.error('Nieobsługiwany typ operacji w UI');
+        setSaving(false);
+        return;
+      }
+
+      onClose?.();
+      onDone?.();
+    } catch (e) {
+      console.error(e);
+      toast.error(e.response?.data?.error || e.message || 'Błąd zapisu operacji');
     } finally {
-      setSubmitting(false);
+      setSaving(false);
     }
   };
 
   return (
-    <div role="dialog" aria-modal="true"
-      style={{ position:'fixed', inset:0, background:'rgba(0,0,0,.35)', display:'grid', placeItems:'center', zIndex:1000 }}
-      onClick={onClose}
-    >
-      <div onClick={(e) => e.stopPropagation()}
-        style={{ width:520, maxWidth:'92vw', background:'#fff', borderRadius:12, border:'1px solid #e5e7eb', boxShadow:'0 10px 30px rgba(0,0,0,.15)', padding:16 }}
-      >
-        <h2 style={{ margin:'0 0 8px' }}>{title}</h2>
-        <p style={{ margin:'0 0 12px', color:'#6b7280' }}>
-          {item?.product?.name} {item?.product?.sku ? `(${item.product.sku})` : ''} • Lok.: {item?.location || '—'}
-        </p>
+    <div className="modal-backdrop">
+      <div className="modal">
+        <div className="modal-header">
+          <h3 style={{ margin: 0 }}>{title}</h3>
+        </div>
 
-        {type === 'out' && reserved > 0 && (
-          <div style={{ marginBottom: 8, fontSize: 13, color: '#374151' }}>
-            Rezerwacja: <strong>{reserved}</strong> (zostanie skonsumowana w pierwszej kolejności).
+        <div className="modal-body">
+          <div style={{ marginBottom: 8, color: '#64748b' }}>
+            <div><strong>{item.product?.name}</strong> {item.product?.sku ? `(${item.product.sku})` : ''}</div>
+            <div>Lok.: <strong>{item.location || '—'}</strong></div>
           </div>
-        )}
 
-        <form onSubmit={submit} style={{ display:'grid', gap:10 }}>
-          <label>
-            Ilość
-            <input type="number" min={1} step={1} value={qty} onChange={(e) => setQty(e.target.value)} style={{ width:160, marginLeft:8 }} autoFocus />
-            {type === 'out' && (
-              <span style={{ marginLeft: 8, color: '#6b7280' }}>
-                (dostępne: {available} / stan: {Number(item?.quantity || 0)})
-              </span>
-            )}
-          </label>
+          {type === 'transfer' && (
+            <div className="field" style={{ marginBottom: 8 }}>
+              <label>Do lokalizacji</label>
+              <LocationSelect value={toLocation} onChange={setToLocation} />
+              <small style={{ color: '#64748b' }}>
+                Po transferze pozycja w docelowej lokalizacji zostanie oznaczona jako <em>in_transit</em>.
+              </small>
+            </div>
+          )}
 
-          <label>
-            Data operacji
-            <input type="datetime-local" value={date} onChange={(e) => setDate(e.target.value)} style={{ marginLeft: 8 }} />
-          </label>
+          {(type === 'in' || type === 'out' || type === 'transfer') && (
+            <div className="field" style={{ marginBottom: 8 }}>
+              <label>Ilość</label>
+              <input
+                type="number"
+                min={1}
+                step={1}
+                value={qty}
+                onChange={(e) => setQty(e.target.value)}
+                autoFocus
+              />
+              {type === 'out' && (
+                <small style={{ color: '#64748b' }}>
+                  Dostępne: {available}
+                </small>
+              )}
+            </div>
+          )}
 
-          <label style={{ display:'grid', gap:6 }}>
-            Notatki (opcjonalnie)
+          <div className="field" style={{ marginBottom: 8 }}>
+            <label>Data operacji</label>
+            <input
+              type="datetime-local"
+              value={when}
+              onChange={(e) => setWhen(e.target.value)}
+            />
+          </div>
+
+          <div className="field" style={{ marginBottom: 8 }}>
+            <label>Notatki (opcjonalnie)</label>
             <textarea rows={3} value={notes} onChange={(e) => setNotes(e.target.value)} />
-          </label>
-
-          <div style={{ display:'flex', gap:8, justifyContent:'flex-end', marginTop:6 }}>
-            <button type="button" onClick={onClose} className="btn">Anuluj</button>
-            <button type="submit" className="btn btn-primary" disabled={submitting}>
-              {submitting ? 'Zapisywanie…' : 'Zapisz operację'}
-            </button>
           </div>
-        </form>
+        </div>
+
+        <div className="modal-footer" style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+          <button onClick={onClose} disabled={saving}>Anuluj</button>
+          <button onClick={submit} disabled={saving}>
+            {saving ? 'Zapisywanie…' : 'Zapisz operację'}
+          </button>
+        </div>
       </div>
+
+      <style>{`
+        .modal-backdrop {
+          position: fixed; inset: 0; background: rgba(0,0,0,.3);
+          display: flex; align-items: center; justify-content: center; z-index: 50;
+        }
+        .modal {
+          width: 520px; max-width: calc(100vw - 32px);
+          background: #fff; border-radius: 8px; box-shadow: 0 10px 30px rgba(0,0,0,.15);
+        }
+        .modal-header { padding: 12px 16px; border-bottom: 1px solid #eee; }
+        .modal-body { padding: 12px 16px; }
+        .modal-footer { padding: 12px 16px; border-top: 1px solid #eee; }
+        .field label { display:block; font-weight:600; margin-bottom:4px; }
+        .field input, .field textarea, .field select { width:100%; }
+      `}</style>
     </div>
   );
 }
-
-OperationModal.propTypes = {
-  open: PropTypes.bool.isRequired,
-  type: PropTypes.oneOf(['in', 'out']).isRequired,
-  item: PropTypes.object,
-  onClose: PropTypes.func,
-  onDone: PropTypes.func,
-};

@@ -55,14 +55,34 @@ export async function deleteInventoryItem(id) {
   return true;
 }
 
-/** Utworzenie operacji magazynowej (in/out/transfer/adjustment...) */
+/** Operacja magazynowa (in/out) */
 export async function createInventoryOperation(payload) {
   const res = await API.post('/inventory/operations', payload);
   if (!res.data?.success) throw new Error(res.data?.error || 'Błąd tworzenia operacji');
   return res.data.data.operation;
 }
 
-/** Backendowy skrót do statystyk (Dashboard) */
+/** Transfer między lokalizacjami */
+export async function createInventoryTransfer(payload) {
+  const res = await API.post('/inventory/transfer', payload);
+  if (!res.data?.success) throw new Error(res.data?.error || 'Błąd transferu');
+  return res.data.data;
+}
+
+/** Odbiór z tranzytu (flowStatus: in_transit -> available, bez zmiany ilości) */
+export async function receiveInTransit(payload) {
+  // payload: { inventoryItemId, userId?, operationDate?, notes? }
+  const res = await API.post('/inventory/receive', payload);
+  if (!res.data?.success) throw new Error(res.data?.error || 'Błąd oznaczenia odbioru');
+  return res.data.data;
+}
+
+/** Alias dla legacy */
+export async function transferInventory(payload) {
+  return createInventoryTransfer(payload);
+}
+
+/** Dashboard summary */
 export async function getInventorySummary() {
   const res = await API.get('/inventory/summary');
   if (!res.data?.success) throw new Error(res.data?.error || 'Błąd pobierania podsumowania');

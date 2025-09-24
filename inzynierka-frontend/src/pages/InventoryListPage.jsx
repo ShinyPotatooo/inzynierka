@@ -36,7 +36,7 @@ const FLOW_STATUSES = [
   { value: '', label: '— dowolny —' },
   { value: 'available', label: 'Dostępny' },
   { value: 'in_transit', label: 'W tranzycie' },
-  { value: 'reserved', label: 'Zarezerwowany' }, // do filtrowania OK
+  { value: 'reserved', label: 'Zarezerwowany' },
   { value: 'damaged', label: 'Uszkodzony' },
 ];
 
@@ -64,7 +64,6 @@ function getAutoStatus(row) {
   const res = Number(row?.reservedQuantity ?? 0);
   const available = Math.max(0, qty - res);
   if (available <= 0) return 'empty';
-
   const min = Number(row?.product?.minStockLevel ?? row?.product?.reorderPoint ?? 0) || 0;
   if (min > 0 && available <= min) return 'low';
   return null;
@@ -100,7 +99,7 @@ export default function InventoryListPage() {
   const [productInput, setProductInput] = useState('');
   const [productId, setProductId] = useState(null);
   const [prodOptions, setProdOptions] = useState([]);
-  const [loc, setLoc] = useState(''); // tekstowy filtr
+  const [loc, setLoc] = useState('');
   const [supplier, setSupplier] = useState('');
   const [onlyLow, setOnlyLow] = useState(false);
   const [flowStatus, setFlowStatus] = useState('');
@@ -225,6 +224,7 @@ export default function InventoryListPage() {
       reservedQuantity: row.reservedQuantity,
       condition: row.condition || 'new',
       flowStatus: row.flowStatus || 'available',
+      lastUpdatedBy: userId,
     });
   };
   const cancelEdit = () => { setEditId(null); setDraft({}); };
@@ -388,9 +388,12 @@ export default function InventoryListPage() {
               <tr><td colSpan={9} style={{ padding: 16 }}>Brak pozycji</td></tr>
             ) : (
               visible.map((row, idx) => {
-                const available = (row.quantity || 0) - (row.reservedQuantity || 0);
+                const available = Math.max(0, (row.quantity || 0) - (row.reservedQuantity || 0));
                 const isEdit = editId === row.id;
                 const auto = getAutoStatus(row);
+
+                const disableOut = row.flowStatus === 'damaged' || row.flowStatus === 'in_transit' || available <= 0;
+                const disableTransfer = row.flowStatus === 'damaged' || available <= 0;
 
                 return (
                   <tr key={row.id}>
@@ -492,7 +495,7 @@ export default function InventoryListPage() {
                       )}
                     </td>
 
-                    <td style={{ minWidth: 360 }}>
+                    <td style={{ minWidth: 520 }}>
                       {isEdit ? (
                         <>
                           <button onClick={() => saveEdit(row.id)}>Zapisz</button>
@@ -501,7 +504,11 @@ export default function InventoryListPage() {
                       ) : (
                         <>
                           <button onClick={() => openOp(row, 'in')}>Przyjęcie</button>
-                          <button onClick={() => openOp(row, 'out')}>Wydanie</button>
+                          <button onClick={() => openOp(row, 'out')} disabled={disableOut} title={disableOut ? 'Brak dostępnej ilości / pozycja uszkodzona / w tranzycie' : ''}>Wydanie</button>
+                          <button onClick={() => openOp(row, 'transfer')} disabled={disableTransfer} title={disableTransfer ? 'Brak dostępnej ilości / pozycja uszkodzona' : ''}>Przenieś</button>
+                          {row.flowStatus === 'in_transit' && (
+                            <button onClick={() => openOp(row, 'receive')}>Odbierz</button>
+                          )}
                           <button onClick={() => startEdit(row)}>Edytuj</button>
                           <Link to={`/inventory/${row.id}`}>Szczegóły</Link>
                           <button className="delete-btn" onClick={() => removeRow(row)}>Usuń</button>
