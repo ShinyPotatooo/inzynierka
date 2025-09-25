@@ -29,6 +29,11 @@ export default function OperationModal({ open, type, item, onClose, onDone }) {
   // transfer-only
   const [toLocation, setToLocation] = useState('');
 
+  // REZERWACJE
+  const [useReserved, setUseReserved] = useState(false); // OUT: wydaj z puli zarezerwowanej
+  const [reserveAfter, setReserveAfter] = useState(false); // IN: zarezerwuj z przyjęcia
+  const [reserveAmount, setReserveAmount] = useState(0);   // IN: ile z przyjęcia zarezerwować
+
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -37,13 +42,31 @@ export default function OperationModal({ open, type, item, onClose, onDone }) {
       setWhen(nowLocalDatetimeValue());
       setNotes('');
       setToLocation('');
+      setUseReserved(false);
+      setReserveAfter(false);
+      setReserveAmount(0);
     }
   }, [open]);
 
+  const totalQty = Number(item?.quantity || 0);
+  const reservedQty = Number(item?.reservedQuantity || 0);
+
   const available = useMemo(() => {
     if (!item) return 0;
-    return Math.max(0, (item.quantity || 0) - (item.reservedQuantity || 0));
-  }, [item]);
+    return Math.max(0, totalQty - reservedQty);
+  }, [item, totalQty, reservedQty]);
+
+  // maks. ile można wydać przy zaznaczonym "z rezerwacji"
+  const maxOut = useMemo(() => (useReserved ? reservedQty : available), [useReserved, reservedQty, available]);
+
+  // maks. ile można od razu zarezerwować z przyjęcia (nie więcej niż przyjmowana ilość)
+  const maxReserveOnReceive = useMemo(() => {
+    const q = Number(qty || 0);
+    if (q <= 0) return 0;
+    // po przyjęciu: newTotal = totalQty + q; rezerwacja nie może przekroczyć newTotal
+    // ale wystarczy ograniczyć do q, by nie przekroczyć (reserved + q) <= newTotal
+    return Math.max(0, Math.min(q, totalQty + q - reservedQty));
+  }, [qty, totalQty, reservedQty]);
 
   if (!open || !item) return null;
 
@@ -65,22 +88,51 @@ export default function OperationModal({ open, type, item, onClose, onDone }) {
           return;
         }
       }
-      if (type === 'out' && q > available) {
-        toast.error('Brak dostępnej ilości do wydania');
-        return;
+      if (type === 'out') {
+        if (useReserved) {
+          if (q > reservedQty) {
+            toast.error('Nie możesz wydać więcej niż zarezerwowane.');
+            return;
+          }
+        } else {
+          if (q > available) {
+            toast.error('Brak dostępnej ilości do wydania.');
+            return;
+          }
+        }
+      }
+      if (type === 'in' && reserveAfter) {
+        const r = Number(reserveAmount || 0);
+        if (r < 0) {
+          toast.error('Rezerwacja nie może być ujemna.');
+          return;
+        }
+        if (r > maxReserveOnReceive) {
+          toast.error(`Maksymalna rezerwacja z przyjęcia: ${maxReserveOnReceive}`);
+          return;
+        }
       }
 
       setSaving(true);
 
       if (type === 'in' || type === 'out') {
-        await createInventoryOperation({
+        const payload = {
           inventoryItemId: item.id,
           operationType: type,
           quantity: q,
           userId,
           operationDate: when,
           notes: notes || undefined,
-        });
+        };
+
+        // nowe pola do rezerwacji
+        if (type === 'out') payload.useReserved = !!useReserved;
+        if (type === 'in') {
+          payload.reserveAfter = !!reserveAfter;
+          payload.reserveAmount = reserveAfter ? Math.min(Number(reserveAmount || 0), maxReserveOnReceive) : 0;
+        }
+
+        await createInventoryOperation(payload);
         toast.success('Operacja zapisana');
       } else if (type === 'transfer') {
         if (!toLocation) {
@@ -90,6 +142,12 @@ export default function OperationModal({ open, type, item, onClose, onDone }) {
         }
         if (toLocation.trim().toLowerCase() === String(item.location || '').trim().toLowerCase()) {
           toast.error('Lokalizacja docelowa nie może być taka sama');
+          setSaving(false);
+          return;
+        }
+
+        if (q > available) {
+          toast.error('Nie możesz przenieść więcej niż dostępne.');
           setSaving(false);
           return;
         }
@@ -139,6 +197,7 @@ export default function OperationModal({ open, type, item, onClose, onDone }) {
           <div style={{ marginBottom: 8, color: '#64748b' }}>
             <div><strong>{item.product?.name}</strong> {item.product?.sku ? `(${item.product.sku})` : ''}</div>
             <div>Lok.: <strong>{item.location || '—'}</strong></div>
+            <div>Stan: <strong>{totalQty}</strong> &nbsp;|&nbsp; Zarezerw.: <strong>{reservedQty}</strong> &nbsp;|&nbsp; Dostępne: <strong>{available}</strong></div>
           </div>
 
           {type === 'transfer' && (
@@ -164,13 +223,51 @@ export default function OperationModal({ open, type, item, onClose, onDone }) {
               />
               {type === 'out' && (
                 <small style={{ color: '#64748b' }}>
-                  Dostępne: {available}
+                  {useReserved ? `Maks. z rezerwacji: ${reservedQty}` : `Dostępne: ${available}`}
                 </small>
               )}
             </div>
           )}
 
-          <div className="field" style={{ marginBottom: 8 }}>
+          {type === 'out' && (
+            <label className="row" style={{ marginBottom: 8 }}>
+              <input
+                type="checkbox"
+                checked={useReserved}
+                onChange={(e) => setUseReserved(e.target.checked)}
+                disabled={reservedQty <= 0}
+              />
+              <span>Wydaj z puli zarezerwowanej (max: {reservedQty})</span>
+            </label>
+          )}
+
+          {type === 'in' && (
+            <div className="reserve-block">
+              <label className="row">
+                <input
+                  type="checkbox"
+                  checked={reserveAfter}
+                  onChange={(e) => setReserveAfter(e.target.checked)}
+                />
+                <span>Zarezerwuj z przyjęcia</span>
+              </label>
+
+              <label className="inline" style={{ marginTop: 6 }}>
+                Ile zarezerwować
+                <input
+                  type="number"
+                  min={0}
+                  step={1}
+                  value={reserveAmount}
+                  onChange={(e) => setReserveAmount(e.target.value)}
+                  disabled={!reserveAfter}
+                />
+              </label>
+              <div className="hint">Max: {maxReserveOnReceive}</div>
+            </div>
+          )}
+
+          <div className="field" style={{ marginTop: 8 }}>
             <label>Data operacji</label>
             <input
               type="datetime-local"
@@ -199,14 +296,18 @@ export default function OperationModal({ open, type, item, onClose, onDone }) {
           display: flex; align-items: center; justify-content: center; z-index: 50;
         }
         .modal {
-          width: 520px; max-width: calc(100vw - 32px);
-          background: #fff; border-radius: 8px; box-shadow: 0 10px 30px rgba(0,0,0,.15);
+          width: 560px; max-width: calc(100vw - 32px);
+          background: #fff; border-radius: 10px; box-shadow: 0 10px 30px rgba(0,0,0,.15);
         }
         .modal-header { padding: 12px 16px; border-bottom: 1px solid #eee; }
         .modal-body { padding: 12px 16px; }
         .modal-footer { padding: 12px 16px; border-top: 1px solid #eee; }
         .field label { display:block; font-weight:600; margin-bottom:4px; }
         .field input, .field textarea, .field select { width:100%; }
+        .row { display:flex; gap:8px; align-items:center; }
+        .reserve-block { background:#f9fafb; border:1px solid #e5e7eb; border-radius:8px; padding:8px 10px; margin-top:6px;}
+        .inline { display:grid; grid-template-columns: 1fr 140px; align-items:center; gap:8px; }
+        .hint { font-size:.85rem; color:#6b7280; margin-top:4px; }
       `}</style>
     </div>
   );

@@ -445,6 +445,7 @@ router.delete('/:id', async (req, res) => {
 
 /* =================== POST /api/inventory/operations (in/out) ============= */
 router.post('/operations', async (req, res) => {
+  const t = await sequelize.transaction();
   try {
     const {
       inventoryItemId,
@@ -453,6 +454,10 @@ router.post('/operations', async (req, res) => {
       userId,
       operationDate = new Date(),
       notes,
+      // NOWE:
+      useReserved = false,   // OUT: wydać z puli zarezerwowanej
+      reserveAfter = false,  // IN: od razu coś zarezerwować
+      reserveAmount = 0,     // IN: ile z przyjęcia trafi do rezerwacji
     } = req.body;
 
     if (!inventoryItemId || !operationType || !quantity) {
@@ -461,18 +466,26 @@ router.post('/operations', async (req, res) => {
         error: 'Inventory item ID, operation type, and quantity are required',
       });
     }
-
     if (!['in', 'out'].includes(operationType)) {
       return res.status(400).json({ success: false, error: 'Unsupported operation type' });
     }
 
-    const item = await InventoryItem.findByPk(inventoryItemId);
+    const q = parseInt(quantity, 10);
+    if (!Number.isFinite(q) || q <= 0) {
+      return res.status(400).json({ success: false, error: 'Quantity must be > 0' });
+    }
+
+    const item = await InventoryItem.findByPk(inventoryItemId, { transaction: t, lock: t.LOCK.UPDATE });
     if (!item) return res.status(400).json({ success: false, error: 'Inventory item not found' });
 
-    const q = parseInt(quantity, 10);
     const actor = userId ? Number(userId) : 1;
-    const quantityBefore = item.quantity;
-    const available = Math.max(0, (item.quantity || 0) - (item.reservedQuantity || 0));
+    const qtyBefore = Number(item.quantity || 0);
+    const resBefore = Number(item.reservedQuantity || 0);
+    const available = Math.max(0, qtyBefore - resBefore);
+
+    let qtyAfter = qtyBefore;
+    let resAfter = resBefore;
+    let infoNote = '';
 
     if (operationType === 'out') {
       if (item.flowStatus === 'damaged') {
@@ -481,13 +494,32 @@ router.post('/operations', async (req, res) => {
       if (item.flowStatus === 'in_transit') {
         return res.status(400).json({ success: false, error: 'Item is in transit — receive first or mark as available' });
       }
-      if (q > available) {
-        return res.status(400).json({ success: false, error: 'Insufficient available quantity' });
+
+      if (useReserved) {
+        if (q > resBefore) return res.status(400).json({ success: false, error: 'Nie możesz wydać więcej niż zarezerwowane' });
+        qtyAfter = qtyBefore - q;
+        resAfter = resBefore - q;
+        infoNote = '[OUT from reserved] ';
+      } else {
+        if (q > available) return res.status(400).json({ success: false, error: 'Insufficient available quantity' });
+        qtyAfter = qtyBefore - q;
+        // rezerwacja bez zmian
       }
     }
 
-    const quantityAfter = operationType === 'in' ? quantityBefore + q : quantityBefore - q;
+    if (operationType === 'in') {
+      qtyAfter = qtyBefore + q;
 
+      if (reserveAfter) {
+        let r = Math.max(0, Math.min(parseInt(reserveAmount, 10) || 0, q));
+        // dodatkowe zabezpieczenie: rezerwacja nie może przekroczyć stanu po operacji
+        r = Math.min(r, qtyAfter - resBefore);
+        resAfter = resBefore + r;
+        infoNote = r > 0 ? `[IN reserve +${r}] ` : '';
+      }
+    }
+
+    // zapis operacji
     const op = await InventoryOperation.create({
       inventoryItemId,
       productId: item.productId,
@@ -495,20 +527,26 @@ router.post('/operations', async (req, res) => {
       quantity: q,
       userId: actor,
       operationDate: new Date(operationDate),
-      notes,
-      quantityBefore,
-      quantityAfter,
-    });
+      notes: (infoNote || '') + (notes || ''),
+      quantityBefore: qtyBefore,
+      quantityAfter: qtyAfter,
+    }, { transaction: t });
 
-    await item.update({ quantity: quantityAfter, lastUpdatedBy: actor });
+    // aktualizacja pozycji
+    await item.update(
+      { quantity: qtyAfter, reservedQuantity: resAfter, lastUpdatedBy: actor },
+      { transaction: t }
+    );
 
     try { await recomputeAndNotifyLowStock(item.productId); } catch (e) { console.warn('lowStock recompute failed:', e?.message); }
 
+    await t.commit();
     res.status(201).json({
       success: true,
       data: { operation: op, message: 'Inventory operation created successfully' },
     });
   } catch (err) {
+    await t.rollback();
     console.error('Create operation error:', err);
     res.status(500).json({ success: false, error: 'Internal server error' });
   }
