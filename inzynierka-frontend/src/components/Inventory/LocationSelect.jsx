@@ -4,7 +4,7 @@ import { getLocationOptions } from '../../services/locations';
 /**
  * STRICT LocationSelect
  * - Główne pole jest readOnly (nie pozwala wpisać własnej wartości)
- * - Dropdown z polem szukania 2+ znaki, wyniki z /dictionaries/locations/options
+ * - Dropdown z polem szukania 1+ znak, wyniki z /dictionaries/locations/options
  * - Wartość można ustawić TYLKO wybierając opcję z listy
  */
 export default function LocationSelect({
@@ -42,7 +42,7 @@ export default function LocationSelect({
 
     debTimer.current = setTimeout(async () => {
       const q = query.trim();
-      if (q.length < 2) { setOptions([]); return; }
+      if (q.length < 1) { setOptions([]); return; } // ← 1 znak
       try {
         setLoading(true);
         const opts = await getLocationOptions(q, 20); // [{id,label}]
@@ -52,7 +52,7 @@ export default function LocationSelect({
       } finally {
         setLoading(false);
       }
-    }, 300);
+    }, 250);
 
     return () => clearTimeout(debTimer.current);
   }, [open, query]);
@@ -61,7 +61,6 @@ export default function LocationSelect({
   const openDropdown = useCallback(() => {
     if (disabled) return;
     setOpen(true);
-    // małe opóźnienie, żeby input był w DOM
     setTimeout(() => searchRef.current?.focus(), 0);
   }, [disabled]);
 
@@ -72,7 +71,6 @@ export default function LocationSelect({
     setQuery('');
   }, [onChange]);
 
-  // --------- Keyboard support on search ----------
   const onSearchKeyDown = (e) => {
     if (e.key === 'Escape') setOpen(false);
   };
@@ -120,7 +118,7 @@ export default function LocationSelect({
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={onSearchKeyDown}
-              placeholder="Szukaj (min. 2 znaki)…"
+              placeholder="Szukaj (min. 1 znak)…"
               style={{
                 width: '100%',
                 padding: '8px 10px',
@@ -134,13 +132,13 @@ export default function LocationSelect({
             <div style={{ padding: 10, color: '#666' }}>Szukanie…</div>
           )}
 
-          {!loading && query.trim().length < 2 && (
+          {!loading && query.trim().length < 1 && (
             <div style={{ padding: 10, color: '#6b7280' }}>
-              Wpisz co najmniej 2 znaki.
+              Wpisz co najmniej 1 znak.
             </div>
           )}
 
-          {!loading && query.trim().length >= 2 && options.length === 0 && (
+          {!loading && query.trim().length >= 1 && options.length === 0 && (
             <div style={{ padding: 10, color: '#6b7280' }}>
               Brak wyników dla „{query.trim()}”.
             </div>
@@ -149,7 +147,7 @@ export default function LocationSelect({
           {!loading && options.map(opt => (
             <div
               key={opt.id}
-              onMouseDown={(e) => { e.preventDefault(); selectValue(opt.label); }} // mouseDown, by nie gubić focusu
+              onMouseDown={(e) => { e.preventDefault(); selectValue(opt.label); }}
               style={{
                 padding: '10px 12px',
                 cursor: 'pointer',

@@ -1,5 +1,4 @@
-// src/pages/ProductsListPage.jsx
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import { listProducts } from '../services/products';
@@ -16,7 +15,16 @@ function bySorter(v) {
   if (v === 'idDesc') return (a, b) => b.id - a.id;
   if (v === 'nameAsc') return (a, b) => (a.name || '').localeCompare(b.name || '');
   if (v === 'nameDesc') return (a, b) => (b.name || '').localeCompare(a.name || '');
-  return (a, b) => a.id - b.id; // idAsc (domyślne)
+  return (a, b) => a.id - b.id;
+}
+
+function useDebounced(value, delay = 300) {
+  const [v, setV] = useState(value);
+  useEffect(() => {
+    const t = setTimeout(() => setV(value), delay);
+    return () => clearTimeout(t);
+  }, [value, delay]);
+  return v;
 }
 
 export default function ProductsListPage() {
@@ -26,6 +34,8 @@ export default function ProductsListPage() {
   const [rows, setRows] = useState([]);
 
   const [q, setQ] = useState('');
+  const qDebounced = useDebounced(q, 300);
+
   const [sort, setSort] = useState('idAsc');
 
   const [page, setPage] = useState(1);
@@ -36,15 +46,13 @@ export default function ProductsListPage() {
   const [showSequential, setShowSequential] = useState(true);
   const rowNo = (idx) => (page - 1) * limit + idx + 1;
 
-  const timer = useRef(null);
-
-  const load = async (_page = page, _q = q) => {
+  const load = useCallback(async () => {
     try {
       setLoading(true);
       const { products, pagination } = await listProducts({
-        page: _page,
+        page,
         limit,
-        search: _q || undefined,
+        search: qDebounced || undefined,
       });
       setRows(products || []);
       if (pagination) {
@@ -53,35 +61,34 @@ export default function ProductsListPage() {
         setTotal(pagination.totalItems);
       }
     } catch (e) {
+      // eslint-disable-next-line no-console
       console.error(e);
       toast.error(e.message || 'Błąd ładowania produktów');
     } finally {
       setLoading(false);
     }
-  };
-
-  useEffect(() => { load(1, q); /* eslint-disable-next-line */ }, []);
+  }, [page, limit, qDebounced]);
 
   useEffect(() => {
-    if (timer.current) clearTimeout(timer.current);
-    timer.current = setTimeout(() => load(1, q), 300);
-    return () => clearTimeout(timer.current);
-    // eslint-disable-next-line
-  }, [q]);
+    load();
+  }, [load]);
 
   const visible = useMemo(() => {
     const srt = bySorter(sort);
     return [...rows].sort(srt);
   }, [rows, sort]);
 
-  const next = () => page < pages && load(page + 1, q);
-  const prev = () => page > 1 && load(page - 1, q);
+  const next = () =>
+    setPage((p) => (p < pages ? p + 1 : p));
+  const prev = () =>
+    setPage((p) => (p > 1 ? p - 1 : p));
 
-  const exportParams = { search: q || undefined };
+  const exportParams = { search: qDebounced || undefined };
   const onExportCSV = async () => {
     try {
       await downloadProductsCSV(exportParams);
     } catch (e) {
+      // eslint-disable-next-line no-console
       console.error(e);
       toast.error(e.message || 'Nie udało się wyeksportować CSV');
     }
@@ -90,6 +97,7 @@ export default function ProductsListPage() {
     try {
       await downloadProductsPDF(exportParams);
     } catch (e) {
+      // eslint-disable-next-line no-console
       console.error(e);
       toast.error(e.message || 'Nie udało się wyeksportować PDF');
     }
@@ -103,7 +111,7 @@ export default function ProductsListPage() {
         <input
           placeholder="Szukaj (nazwa / SKU / opis)"
           value={q}
-          onChange={(e) => setQ(e.target.value)}
+          onChange={(e) => { setPage(1); setQ(e.target.value); }}
           style={{ ...inputInline, minWidth: 260 }}
         />
         <select value={sort} onChange={(e) => setSort(e.target.value)} style={inputInline}>
@@ -187,7 +195,6 @@ export default function ProductsListPage() {
   );
 }
 
-// --- wspólne style ---
 const th = { textAlign: 'left', padding: '10px 8px', fontWeight: 600 };
 const td = { padding: 10, verticalAlign: 'middle' };
 
@@ -215,16 +222,5 @@ const btnGray = {
   borderRadius: 6,
   padding: '6px 10px',
   cursor: 'pointer',
-  fontWeight: 600,
-};
-
-const btnDanger = {
-  background: '#b0413e',
-  color: 'white',
-  border: 'none',
-  borderRadius: 6,
-  padding: '6px 10px',
-  cursor: 'pointer',
-  marginLeft: 8,
   fontWeight: 600,
 };

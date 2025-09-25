@@ -9,6 +9,7 @@ import {
   deleteInventoryItem,
 } from '../services/inventory';
 import { getProductOptions } from '../services/products';
+import { getLocationOptions } from '../services/locations';
 import { downloadInventoryCSV, downloadInventoryPDF } from '../services/download';
 import OperationModal from '../components/Inventory/OperationModal';
 import LocationSelect from '../components/Inventory/LocationSelect';
@@ -32,11 +33,11 @@ const extractSku = (label = '') => {
 };
 const nameBeforeParen = (label = '') => String(label).split('(')[0].trim();
 
+// UWAGA: bez „reserved” – na potrzeby filtra w UI
 const FLOW_STATUSES = [
   { value: '', label: '— dowolny —' },
   { value: 'available', label: 'Dostępny' },
   { value: 'in_transit', label: 'W tranzycie' },
-  { value: 'reserved', label: 'Zarezerwowany' },
   { value: 'damaged', label: 'Uszkodzony' },
 ];
 
@@ -64,6 +65,7 @@ function getAutoStatus(row) {
   const res = Number(row?.reservedQuantity ?? 0);
   const available = Math.max(0, qty - res);
   if (available <= 0) return 'empty';
+
   const min = Number(row?.product?.minStockLevel ?? row?.product?.reorderPoint ?? 0) || 0;
   if (min > 0 && available <= min) return 'low';
   return null;
@@ -99,14 +101,14 @@ export default function InventoryListPage() {
   const [productInput, setProductInput] = useState('');
   const [productId, setProductId] = useState(null);
   const [prodOptions, setProdOptions] = useState([]);
+
+  // lokalizacja (z podpowiedziami po 1 znaku)
   const [loc, setLoc] = useState('');
-  const [supplier, setSupplier] = useState('');
+  const [locOptions, setLocOptions] = useState([]);
+
   const [onlyLow, setOnlyLow] = useState(false);
   const [flowStatus, setFlowStatus] = useState('');
   const [sort, setSort] = useState('idAsc');
-
-  // --- Lp. vs ID ---
-  const [showSequential, setShowSequential] = useState(true);
 
   // --- EDYCJA ---
   const [editId, setEditId] = useState(null);
@@ -124,7 +126,6 @@ export default function InventoryListPage() {
       const { items: list = [] } = await fetchInventoryItems({
         productId: productId || undefined,
         location: loc || undefined,
-        supplier: supplier || undefined,
         lowStock: onlyLow || undefined,
         flowStatus: flowStatus || undefined,
         limit: 50,
@@ -215,6 +216,29 @@ export default function InventoryListPage() {
     } catch (_e) { /* ignore */ }
   };
 
+  // --- AUTOCOMPLETE LOKALIZACJI (filtr) — po 1 znaku ---
+  const locDebounce = useRef(null);
+  useEffect(() => {
+    const q = (loc || '').trim();
+    if (locDebounce.current) clearTimeout(locDebounce.current);
+
+    if (q.length < 1) {
+      setLocOptions([]);
+      return;
+    }
+
+    locDebounce.current = setTimeout(async () => {
+      try {
+        const opts = await getLocationOptions(q, 20);
+        setLocOptions(opts || []);
+      } catch (_e) {
+        setLocOptions([]);
+      }
+    }, 200);
+
+    return () => clearTimeout(locDebounce.current);
+  }, [loc]);
+
   // --- EDYCJA WIERSZA ---
   const startEdit = (row) => {
     setEditId(row.id);
@@ -224,7 +248,6 @@ export default function InventoryListPage() {
       reservedQuantity: row.reservedQuantity,
       condition: row.condition || 'new',
       flowStatus: row.flowStatus || 'available',
-      lastUpdatedBy: userId,
     });
   };
   const cancelEdit = () => { setEditId(null); setDraft({}); };
@@ -268,7 +291,6 @@ export default function InventoryListPage() {
     setProductInput('');
     setProductId(null);
     setLoc('');
-    setSupplier('');
     setOnlyLow(false);
     setFlowStatus('');
     setSort('idAsc');
@@ -279,7 +301,6 @@ export default function InventoryListPage() {
   const makeExportParams = () => ({
     productId: productId || undefined,
     location: loc || undefined,
-    supplier: supplier || undefined,
     lowStock: onlyLow || undefined,
     flowStatus: flowStatus || undefined,
   });
@@ -322,28 +343,23 @@ export default function InventoryListPage() {
           {prodOptions.map((o) => <option key={o.id} value={o.label} />)}
         </datalist>
 
+        {/* Lokalizacja – podpowiedzi po 1 znaku */}
         <input
+          list="loc-filter-options"
           placeholder="Lokalizacja"
           value={loc}
           onChange={(e) => setLoc(e.target.value)}
           style={{ minWidth: 160 }}
         />
+        <datalist id="loc-filter-options">
+          {locOptions.map(o => <option key={o.id} value={o.label} />)}
+        </datalist>
+
         <select value={sort} onChange={(e) => setSort(e.target.value)}>
           {sorters.map((s) => (
             <option key={s.value} value={s.value}>{`Sort: ${s.label}`}</option>
           ))}
         </select>
-
-        <button onClick={() => setShowSequential(v => !v)}>
-          {showSequential ? 'Pokaż ID' : 'Numeruj od 1'}
-        </button>
-
-        <input
-          placeholder="Dostawca"
-          value={supplier}
-          onChange={(e) => setSupplier(e.target.value)}
-          style={{ minWidth: 160 }}
-        />
 
         <select value={flowStatus} onChange={(e) => setFlowStatus(e.target.value)} style={{ minWidth: 170 }}>
           {FLOW_STATUSES.map(o => <option key={o.value || 'any'} value={o.value}>{o.label}</option>)}
@@ -370,7 +386,7 @@ export default function InventoryListPage() {
         <table className="inventory-table">
           <thead>
             <tr>
-              <th>{showSequential ? 'Lp.' : 'ID'}</th>
+              <th>ID</th>
               <th>Produkt</th>
               <th>Lokalizacja</th>
               <th>Ilość</th>
@@ -387,7 +403,7 @@ export default function InventoryListPage() {
             ) : visible.length === 0 ? (
               <tr><td colSpan={9} style={{ padding: 16 }}>Brak pozycji</td></tr>
             ) : (
-              visible.map((row, idx) => {
+              visible.map((row) => {
                 const available = Math.max(0, (row.quantity || 0) - (row.reservedQuantity || 0));
                 const isEdit = editId === row.id;
                 const auto = getAutoStatus(row);
@@ -397,9 +413,7 @@ export default function InventoryListPage() {
 
                 return (
                   <tr key={row.id}>
-                    <td style={{ width: 60 }}>
-                      {showSequential ? (idx + 1) : row.id}
-                    </td>
+                    <td style={{ width: 80 }}>{row.id}</td>
 
                     <td>
                       <div className="product-cell">
@@ -495,7 +509,7 @@ export default function InventoryListPage() {
                       )}
                     </td>
 
-                    <td style={{ minWidth: 520 }}>
+                    <td style={{ minWidth: 420 }}>
                       {isEdit ? (
                         <>
                           <button onClick={() => saveEdit(row.id)}>Zapisz</button>
@@ -506,9 +520,6 @@ export default function InventoryListPage() {
                           <button onClick={() => openOp(row, 'in')}>Przyjęcie</button>
                           <button onClick={() => openOp(row, 'out')} disabled={disableOut} title={disableOut ? 'Brak dostępnej ilości / pozycja uszkodzona / w tranzycie' : ''}>Wydanie</button>
                           <button onClick={() => openOp(row, 'transfer')} disabled={disableTransfer} title={disableTransfer ? 'Brak dostępnej ilości / pozycja uszkodzona' : ''}>Przenieś</button>
-                          {row.flowStatus === 'in_transit' && (
-                            <button onClick={() => openOp(row, 'receive')}>Odbierz</button>
-                          )}
                           <button onClick={() => startEdit(row)}>Edytuj</button>
                           <Link to={`/inventory/${row.id}`}>Szczegóły</Link>
                           <button className="delete-btn" onClick={() => removeRow(row)}>Usuń</button>
