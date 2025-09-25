@@ -392,7 +392,7 @@ router.put('/:id', async (req, res) => {
       }
     }
 
-    // zmiana statusu (np. in_transit -> available podczas „Odbierz”)
+    // zmiana statusu
     if (update.flowStatus != null && update.flowStatus !== prevStatus) {
       await InventoryOperation.create({
         inventoryItemId: item.id,
@@ -415,30 +415,6 @@ router.put('/:id', async (req, res) => {
     });
   } catch (err) {
     console.error('Update inventory item error:', err);
-    res.status(500).json({ success: false, error: 'Internal server error' });
-  }
-});
-
-/* ====================== DELETE /api/inventory/:id ======================== */
-router.delete('/:id', async (req, res) => {
-  try {
-    const item = await InventoryItem.findByPk(req.params.id);
-    if (!item) {
-      return res.status(404).json({ success: false, error: 'Inventory item not found' });
-    }
-
-    if (item.quantity > 0) {
-      return res.status(400).json({ success: false, error: 'Cannot delete inventory item with stock' });
-    }
-
-    const productId = item.productId;
-    await item.destroy();
-
-    try { await recomputeAndNotifyLowStock(productId); } catch (e) { console.warn('lowStock recompute failed:', e?.message); }
-
-    res.json({ success: true, data: { message: 'Inventory item deleted successfully' } });
-  } catch (err) {
-    console.error('Delete inventory item error:', err);
     res.status(500).json({ success: false, error: 'Internal server error' });
   }
 });
@@ -549,6 +525,67 @@ router.post('/operations', async (req, res) => {
     await t.rollback();
     console.error('Create operation error:', err);
     res.status(500).json({ success: false, error: 'Internal server error' });
+  }
+});
+
+/* ====================== POST /api/inventory/receive ===================== */
+/** Odbiór z tranzytu: flowStatus in_transit -> available (bez zmiany ilości).
+ *  Zapisuje wpis w InventoryOperation z operationType = 'receive'.
+ *  Body: { inventoryItemId, userId?, operationDate?, notes? }
+ */
+router.post('/receive', async (req, res) => {
+  const t = await sequelize.transaction();
+  try {
+    const { inventoryItemId, userId, operationDate = new Date(), notes } = req.body;
+
+    if (!inventoryItemId) {
+      await t.rollback();
+      return res.status(400).json({ success: false, error: 'inventoryItemId is required' });
+    }
+
+    const item = await InventoryItem.findByPk(inventoryItemId, { transaction: t, lock: t.LOCK.UPDATE });
+    if (!item) {
+      await t.rollback();
+      return res.status(404).json({ success: false, error: 'Inventory item not found' });
+    }
+
+    if (item.flowStatus !== 'in_transit') {
+      await t.rollback();
+      return res.status(400).json({ success: false, error: 'Item is not in transit' });
+    }
+
+    const actor = userId ? Number(userId) : 1;
+    const qtyBefore = Number(item.quantity || 0);
+
+    // 1) status → available
+    await item.update(
+      { flowStatus: 'available', lastUpdatedBy: actor },
+      { transaction: t }
+    );
+
+    // 2) log operacji 'receive'
+    const op = await InventoryOperation.create({
+      inventoryItemId: item.id,
+      productId: item.productId,
+      operationType: 'receive',
+      quantity: 0,
+      userId: actor,
+      operationDate: new Date(operationDate),
+      notes: notes || 'Receive from transit',
+      quantityBefore: qtyBefore,
+      quantityAfter: qtyBefore,
+      fromLocation: item.location,
+      toLocation: item.location,
+    }, { transaction: t });
+
+    try { await recomputeAndNotifyLowStock(item.productId); } catch (e) { console.warn('lowStock recompute failed:', e?.message); }
+
+    await t.commit();
+    return res.json({ success: true, data: { message: 'Received from transit', operation: op, item } });
+  } catch (err) {
+    await t.rollback();
+    console.error('Receive in-transit error:', err);
+    return res.status(500).json({ success: false, error: 'Internal server error' });
   }
 });
 

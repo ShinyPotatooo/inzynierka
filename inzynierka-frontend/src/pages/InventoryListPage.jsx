@@ -33,7 +33,7 @@ const extractSku = (label = '') => {
 };
 const nameBeforeParen = (label = '') => String(label).split('(')[0].trim();
 
-// UWAGA: bez „reserved” – na potrzeby filtra w UI
+// UI filtr – bez „reserved”
 const FLOW_STATUSES = [
   { value: '', label: '— dowolny —' },
   { value: 'available', label: 'Dostępny' },
@@ -59,7 +59,6 @@ function FlowBadge({ status }) {
   );
 }
 
-/* ---------- AUTO STATUS (empty/low) ---------- */
 function getAutoStatus(row) {
   const qty = Number(row?.quantity ?? 0);
   const res = Number(row?.reservedQuantity ?? 0);
@@ -425,8 +424,10 @@ export default function InventoryListPage() {
                 const isEdit = editId === row.id;
                 const auto = getAutoStatus(row);
 
-                const disableOut = row.flowStatus === 'damaged' || row.flowStatus === 'in_transit' || available <= 0;
-                const disableTransfer = row.flowStatus === 'damaged' || available <= 0;
+                const isInTransit = row.flowStatus === 'in_transit';
+                const disableIn = isInTransit; // w tranzycie – najpierw Odbierz
+                const disableOut = isInTransit || row.flowStatus === 'damaged' || available <= 0;
+                const disableTransfer = isInTransit || row.flowStatus === 'damaged' || available <= 0;
 
                 return (
                   <tr key={row.id}>
@@ -535,23 +536,57 @@ export default function InventoryListPage() {
                           </>
                         ) : (
                           <>
-                            <button className="btn" onClick={() => openOp(row, 'in')}>Przyjęcie</button>
+                            {/* Odbiór z tranzytu – tylko gdy in_transit */}
+                            {isInTransit && (
+                              <button
+                                className="btn btn-primary"
+                                onClick={() => openOp(row, 'receive')}
+                                title="Oznacz pozycję jako odebraną (in_transit → available)"
+                              >
+                                Odbierz
+                              </button>
+                            )}
+
+                            {/* Pozostałe operacje – wyszarzone w tranzycie */}
+                            <button
+                              className="btn"
+                              onClick={() => openOp(row, 'in')}
+                              disabled={disableIn}
+                              title={disableIn ? 'Pozycja w tranzycie — najpierw Odbierz' : ''}
+                            >
+                              Przyjęcie
+                            </button>
+
                             <button
                               className="btn"
                               onClick={() => openOp(row, 'out')}
                               disabled={disableOut}
-                              title={disableOut ? 'Brak dostępnej ilości / pozycja uszkodzona / w tranzycie' : ''}
+                              title={
+                                isInTransit
+                                  ? 'Pozycja w tranzycie — najpierw Odbierz'
+                                  : (row.flowStatus === 'damaged'
+                                      ? 'Pozycja uszkodzona'
+                                      : (available <= 0 ? 'Brak dostępnej ilości' : ''))
+                              }
                             >
                               Wydanie
                             </button>
+
                             <button
                               className="btn"
                               onClick={() => openOp(row, 'transfer')}
                               disabled={disableTransfer}
-                              title={disableTransfer ? 'Brak dostępnej ilości / pozycja uszkodzona' : ''}
+                              title={
+                                isInTransit
+                                  ? 'Pozycja w tranzycie — najpierw Odbierz'
+                                  : (row.flowStatus === 'damaged'
+                                      ? 'Pozycja uszkodzona'
+                                      : (available <= 0 ? 'Brak dostępnej ilości' : ''))
+                              }
                             >
                               Przenieś
                             </button>
+
                             <button className="btn" onClick={() => startEdit(row)}>Edytuj</button>
                             <Link className="linklike" to={`/inventory/${row.id}`}>Szczegóły</Link>
                             <button className="btn danger" onClick={() => removeRow(row)}>Usuń</button>
@@ -567,7 +602,7 @@ export default function InventoryListPage() {
         </table>
       </div>
 
-      {/* Pływający pasek zapisu – zawsze dostępny w trybie edycji */}
+      {/* Pasek zapisu – w trybie edycji */}
       {editId && (
         <div className="edit-floating-bar">
           <span>Edytujesz pozycję #{editId}</span>

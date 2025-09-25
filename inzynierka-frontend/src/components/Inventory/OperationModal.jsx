@@ -30,8 +30,8 @@ export default function OperationModal({ open, type, item, onClose, onDone }) {
   const [toLocation, setToLocation] = useState('');
 
   // REZERWACJE
-  const [useReserved, setUseReserved] = useState(false); // OUT: wydaj z puli zarezerwowanej
-  const [reserveAfter, setReserveAfter] = useState(false); // IN: zarezerwuj z przyjęcia
+  const [useReserved, setUseReserved] = useState(false);  // OUT: wydaj z puli zarezerwowanej
+  const [reserveAfter, setReserveAfter] = useState(false); // IN: zarezerwuj część przyjmowanej ilości
   const [reserveAmount, setReserveAmount] = useState(0);   // IN: ile z przyjęcia zarezerwować
 
   const [saving, setSaving] = useState(false);
@@ -48,26 +48,32 @@ export default function OperationModal({ open, type, item, onClose, onDone }) {
     }
   }, [open]);
 
+  // --- Uwaga: HOOKI MUSZĄ BYĆ ZAWSZE WYWOŁANE ---
+  // Liczymy wartości bezpiecznie nawet gdy item == null, a dopiero potem ewentualnie zwracamy null.
+
   const totalQty = Number(item?.quantity || 0);
   const reservedQty = Number(item?.reservedQuantity || 0);
 
-  const available = useMemo(() => {
-    if (!item) return 0;
-    return Math.max(0, totalQty - reservedQty);
-  }, [item, totalQty, reservedQty]);
+  const available = useMemo(
+    () => Math.max(0, totalQty - reservedQty),
+    [totalQty, reservedQty]
+  );
 
-  // maks. ile można wydać przy zaznaczonym "z rezerwacji"
-  const maxOut = useMemo(() => (useReserved ? reservedQty : available), [useReserved, reservedQty, available]);
+  // maks. out (gdy zaznaczone „z rezerwacji”, limit to reservedQty)
+  const maxOut = useMemo(
+    () => (useReserved ? reservedQty : available),
+    [useReserved, reservedQty, available]
+  );
 
-  // maks. ile można od razu zarezerwować z przyjęcia (nie więcej niż przyjmowana ilość)
+  // maks. ile można od razu zarezerwować z przyjęcia
   const maxReserveOnReceive = useMemo(() => {
     const q = Number(qty || 0);
     if (q <= 0) return 0;
-    // po przyjęciu: newTotal = totalQty + q; rezerwacja nie może przekroczyć newTotal
-    // ale wystarczy ograniczyć do q, by nie przekroczyć (reserved + q) <= newTotal
+    // Po przyjęciu: newTotal = totalQty + q; rezerwacja nie może przekroczyć newTotal.
     return Math.max(0, Math.min(q, totalQty + q - reservedQty));
   }, [qty, totalQty, reservedQty]);
 
+  // Dopiero tutaj możemy warunkowo nic nie renderować
   if (!open || !item) return null;
 
   const titleMap = {
@@ -88,19 +94,19 @@ export default function OperationModal({ open, type, item, onClose, onDone }) {
           return;
         }
       }
+
       if (type === 'out') {
         if (useReserved) {
           if (q > reservedQty) {
             toast.error('Nie możesz wydać więcej niż zarezerwowane.');
             return;
           }
-        } else {
-          if (q > available) {
-            toast.error('Brak dostępnej ilości do wydania.');
-            return;
-          }
+        } else if (q > available) {
+          toast.error('Brak dostępnej ilości do wydania.');
+          return;
         }
       }
+
       if (type === 'in' && reserveAfter) {
         const r = Number(reserveAmount || 0);
         if (r < 0) {
@@ -125,11 +131,13 @@ export default function OperationModal({ open, type, item, onClose, onDone }) {
           notes: notes || undefined,
         };
 
-        // nowe pola do rezerwacji
-        if (type === 'out') payload.useReserved = !!useReserved;
-        if (type === 'in') {
+        if (type === 'out') {
+          payload.useReserved = !!useReserved;
+        } else if (type === 'in') {
           payload.reserveAfter = !!reserveAfter;
-          payload.reserveAmount = reserveAfter ? Math.min(Number(reserveAmount || 0), maxReserveOnReceive) : 0;
+          payload.reserveAmount = reserveAfter
+            ? Math.min(Number(reserveAmount || 0), maxReserveOnReceive)
+            : 0;
         }
 
         await createInventoryOperation(payload);
@@ -145,7 +153,6 @@ export default function OperationModal({ open, type, item, onClose, onDone }) {
           setSaving(false);
           return;
         }
-
         if (q > available) {
           toast.error('Nie możesz przenieść więcej niż dostępne.');
           setSaving(false);
@@ -162,11 +169,11 @@ export default function OperationModal({ open, type, item, onClose, onDone }) {
         });
         toast.success('Transfer zarejestrowany');
       } else if (type === 'receive') {
-        // tylko zmiana statusu z in_transit -> available (bez zmiany ilości)
+        // Zmiana statusu: in_transit -> available (bez zmiany ilości)
         await updateInventoryItem(item.id, {
           flowStatus: 'available',
           lastUpdatedBy: userId,
-          operationDate: when, // backend użyje tego do logu
+          operationDate: when, // zapisze się jako adjustment 0 w logach
           notes: notes || undefined,
         });
         toast.success('Odebrano z tranzytu');
@@ -195,9 +202,16 @@ export default function OperationModal({ open, type, item, onClose, onDone }) {
 
         <div className="modal-body">
           <div style={{ marginBottom: 8, color: '#64748b' }}>
-            <div><strong>{item.product?.name}</strong> {item.product?.sku ? `(${item.product.sku})` : ''}</div>
+            <div>
+              <strong>{item.product?.name}</strong>{' '}
+              {item.product?.sku ? `(${item.product.sku})` : ''}
+            </div>
             <div>Lok.: <strong>{item.location || '—'}</strong></div>
-            <div>Stan: <strong>{totalQty}</strong> &nbsp;|&nbsp; Zarezerw.: <strong>{reservedQty}</strong> &nbsp;|&nbsp; Dostępne: <strong>{available}</strong></div>
+            <div>
+              Stan: <strong>{totalQty}</strong>{' '}
+              &nbsp;|&nbsp; Zarezerw.: <strong>{reservedQty}</strong>{' '}
+              &nbsp;|&nbsp; Dostępne: <strong>{available}</strong>
+            </div>
           </div>
 
           {type === 'transfer' && (
@@ -223,7 +237,9 @@ export default function OperationModal({ open, type, item, onClose, onDone }) {
               />
               {type === 'out' && (
                 <small style={{ color: '#64748b' }}>
-                  {useReserved ? `Maks. z rezerwacji: ${reservedQty}` : `Dostępne: ${available}`}
+                  {useReserved
+                    ? `Maks. z rezerwacji: ${reservedQty}`
+                    : `Dostępne: ${available}`}
                 </small>
               )}
             </div>
