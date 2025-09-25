@@ -255,7 +255,24 @@ export default function InventoryListPage() {
 
   const saveEdit = async (id) => {
     try {
-      const payload = { ...draft, lastUpdatedBy: userId };
+      const payload = {
+        location: (draft.location || '').trim(),
+        quantity: Number(draft.quantity ?? 0),
+        reservedQuantity: Number(draft.reservedQuantity ?? 0),
+        condition: draft.condition,
+        flowStatus: draft.flowStatus,
+        lastUpdatedBy: userId,
+      };
+
+      if (!Number.isFinite(payload.quantity) || !Number.isFinite(payload.reservedQuantity)) {
+        toast.error('Podaj poprawne liczby w polach Ilość / Zarezerw.');
+        return;
+      }
+      if (payload.quantity < 0 || payload.reservedQuantity < 0) {
+        toast.error('Ilości nie mogą być ujemne.');
+        return;
+      }
+
       const updated = await updateInventoryItem(id, payload);
       setItems((prev) => prev.map((it) => (it.id === id ? { ...it, ...updated } : it)));
       toast.success('Zapisano zmiany.');
@@ -509,22 +526,38 @@ export default function InventoryListPage() {
                       )}
                     </td>
 
-                    <td style={{ minWidth: 420 }}>
-                      {isEdit ? (
-                        <>
-                          <button onClick={() => saveEdit(row.id)}>Zapisz</button>
-                          <button onClick={cancelEdit}>Anuluj</button>
-                        </>
-                      ) : (
-                        <>
-                          <button onClick={() => openOp(row, 'in')}>Przyjęcie</button>
-                          <button onClick={() => openOp(row, 'out')} disabled={disableOut} title={disableOut ? 'Brak dostępnej ilości / pozycja uszkodzona / w tranzycie' : ''}>Wydanie</button>
-                          <button onClick={() => openOp(row, 'transfer')} disabled={disableTransfer} title={disableTransfer ? 'Brak dostępnej ilości / pozycja uszkodzona' : ''}>Przenieś</button>
-                          <button onClick={() => startEdit(row)}>Edytuj</button>
-                          <Link to={`/inventory/${row.id}`}>Szczegóły</Link>
-                          <button className="delete-btn" onClick={() => removeRow(row)}>Usuń</button>
-                        </>
-                      )}
+                    <td className="actions-cell">
+                      <div className="actions">
+                        {isEdit ? (
+                          <>
+                            <button className="btn btn-primary" onClick={() => saveEdit(row.id)}>Zapisz</button>
+                            <button className="btn" onClick={cancelEdit}>Anuluj</button>
+                          </>
+                        ) : (
+                          <>
+                            <button className="btn" onClick={() => openOp(row, 'in')}>Przyjęcie</button>
+                            <button
+                              className="btn"
+                              onClick={() => openOp(row, 'out')}
+                              disabled={disableOut}
+                              title={disableOut ? 'Brak dostępnej ilości / pozycja uszkodzona / w tranzycie' : ''}
+                            >
+                              Wydanie
+                            </button>
+                            <button
+                              className="btn"
+                              onClick={() => openOp(row, 'transfer')}
+                              disabled={disableTransfer}
+                              title={disableTransfer ? 'Brak dostępnej ilości / pozycja uszkodzona' : ''}
+                            >
+                              Przenieś
+                            </button>
+                            <button className="btn" onClick={() => startEdit(row)}>Edytuj</button>
+                            <Link className="linklike" to={`/inventory/${row.id}`}>Szczegóły</Link>
+                            <button className="btn danger" onClick={() => removeRow(row)}>Usuń</button>
+                          </>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 );
@@ -533,6 +566,15 @@ export default function InventoryListPage() {
           </tbody>
         </table>
       </div>
+
+      {/* Pływający pasek zapisu – zawsze dostępny w trybie edycji */}
+      {editId && (
+        <div className="edit-floating-bar">
+          <span>Edytujesz pozycję #{editId}</span>
+          <button className="btn btn-primary" onClick={() => saveEdit(editId)}>Zapisz</button>
+          <button className="btn" onClick={cancelEdit}>Anuluj</button>
+        </div>
+      )}
 
       <OperationModal
         open={opModal.open}
