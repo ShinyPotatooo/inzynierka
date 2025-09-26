@@ -1,26 +1,41 @@
 // src/services/api.js
 import axios from 'axios';
 
+// --- wspólny helper do zsynchronizowania nagłówka w obu klientach ---
+export function syncAuthHeader(token) {
+  if (token) {
+    const value = `Bearer ${token}`;
+    axios.defaults.headers.common['Authorization'] = value;
+    API.defaults.headers.common['Authorization'] = value;
+  } else {
+    delete axios.defaults.headers.common['Authorization'];
+    delete API.defaults.headers.common['Authorization'];
+  }
+}
+
 const API = axios.create({
   baseURL: process.env.REACT_APP_API_URL || 'http://localhost:3001/api',
-  withCredentials: true,
+  // JWT w nagłówku – cookies nie są potrzebne:
+  withCredentials: false,
   timeout: 10000,
-  // ❗️Akceptuj 304 (warunkowe odpowiedzi) jako OK
+  // akceptuj 304 jako OK
   validateStatus: (s) => (s >= 200 && s < 300) || s === 304,
 });
 
-// prosty helper do opóźnienia
+// mała pauza do retry
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// --- REQUEST: dopnij token jak masz teraz
+// --- REQUEST: dołącz JWT z localStorage (gdyby ktoś zapomniał syncAuthHeader) ---
 API.interceptors.request.use((config) => {
-  const user = localStorage.getItem('user');
-  const token = user ? JSON.parse(user)?.token : null;
-  if (token) config.headers.Authorization = `Bearer ${token}`;
+  try {
+    const raw = localStorage.getItem('user');
+    const token = raw ? JSON.parse(raw)?.token : null;
+    if (token) config.headers.Authorization = `Bearer ${token}`;
+  } catch (_) {}
   return config;
 });
 
-// --- RESPONSE: retry/backoff dla 429/503 + lepsze komunikaty
+// --- RESPONSE: prosty backoff na 429/503 + czytelne komunikaty ---
 API.interceptors.response.use(
   (response) => response,
   async (error) => {
@@ -34,9 +49,7 @@ API.interceptors.response.use(
     if ((status === 429 || status === 503) && (cfg.__retried || 0) < 2) {
       cfg.__retried = (cfg.__retried || 0) + 1;
       const retryAfter = Number(error.response?.headers?.['retry-after']);
-      const delay = Number.isFinite(retryAfter)
-        ? retryAfter * 1000
-        : 400 * cfg.__retried; // 400ms, potem 800ms
+      const delay = Number.isFinite(retryAfter) ? retryAfter * 1000 : 400 * cfg.__retried;
       await sleep(delay);
       return API(cfg);
     }
@@ -49,7 +62,6 @@ API.interceptors.response.use(
         ? 'Sesja wygasła — zaloguj się ponownie.'
         : 'Błąd sieci lub serwera');
 
-    // eslint-disable-next-line no-console
     console.warn(
       '[API error]',
       cfg.method?.toUpperCase(),
@@ -60,11 +72,7 @@ API.interceptors.response.use(
     );
 
     error.message = message;
-
-    if (!error.response) {
-      error.response = { data: { error: message } };
-    }
-
+    if (!error.response) error.response = { data: { error: message } };
     return Promise.reject(error);
   }
 );

@@ -1,3 +1,4 @@
+// src/components/Navbar.jsx
 import React, { useContext, useEffect, useRef, useState } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { AuthContext } from '../context/AuthContext';
@@ -20,7 +21,7 @@ export default function Navbar() {
       const count = await getUnreadCount({
         userId: user.id,
         role: user.role || 'all',
-        signal: ctrl.signal,
+        signal: ctrl.signal, // ok jeśli w serwisie przekazujesz dalej do axiosa
       });
       setUnread(prev => (prev !== count ? count : prev));
     } catch (e) {
@@ -58,11 +59,6 @@ export default function Navbar() {
     cursor: 'pointer',
   });
 
-  const linkHover = {
-    background: 'rgba(255,255,255,0.08)',
-    color: '#ffffff'
-  };
-
   function handleLogout() {
     if (typeof logout === 'function') {
       logout();
@@ -76,6 +72,7 @@ export default function Navbar() {
   }
 
   const canSeeDictionaries = user && ['admin', 'manager'].includes(user.role);
+  const canComposeNotification = user && ['admin', 'manager'].includes(user.role);
 
   return (
     <div
@@ -84,7 +81,7 @@ export default function Navbar() {
         alignItems: 'center',
         gap: 12,
         padding: '10px 16px',
-        background: '#1f2937', // ciemny, nowoczesny szary
+        background: '#1f2937',
         color: '#e5e7eb',
         fontFamily: 'Segoe UI, Tahoma, Geneva, Verdana, sans-serif',
         fontSize: 14,
@@ -99,62 +96,86 @@ export default function Navbar() {
       <NavLink to="/dashboard" style={linkStyle}>Dashboard</NavLink>
       {user?.role === 'admin' && <NavLink to="/admin" style={linkStyle}>Admin</NavLink>}
 
-      <button
-        onClick={() => navigate('/notifications')}
-        title="Powiadomienia"
-        aria-label={`Powiadomienia${unread > 0 ? `: ${unread} nieprzeczytanych` : ''}`}
-        style={{
-          marginLeft: 'auto',
-          display: 'flex',
-          alignItems: 'center',
-          gap: 6,
-          cursor: 'pointer',
-          background: 'transparent',
-          border: 'none',
-          color: 'inherit',
-          padding: 0,
-          transition: 'all 0.2s',
-        }}
-      >
-        <span aria-hidden="true" style={{ fontSize: 20 }}>🔔</span>
-        {unread > 0 && (
-          <span
+      {/* PRAWY BLOK AKCJI */}
+      <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
+        {canComposeNotification && (
+          <button
+            onClick={() => navigate('/admin/notifications/new')}
+            title="Utwórz nowe powiadomienie"
+            aria-label="Utwórz nowe powiadomienie"
             style={{
-              background: '#ef4444',
+              background: '#2563eb',
               color: '#fff',
-              borderRadius: 999,
-              padding: '2px 8px',
-              fontSize: 12,
+              border: 'none',
+              borderRadius: 6,
+              padding: '6px 10px',
               fontWeight: 700,
-              minWidth: 22,
-              textAlign: 'center',
+              cursor: 'pointer',
+              transition: 'background 0.2s',
             }}
+            onMouseEnter={e => e.currentTarget.style.background = '#1d4ed8'}
+            onMouseLeave={e => e.currentTarget.style.background = '#2563eb'}
           >
-            {unread}
-          </span>
+            + Nowe powiadomienie
+          </button>
         )}
-      </button>
 
-      <div style={{ marginLeft: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
-        <span style={{ opacity: 0.9, fontSize: 13 }}>
-          {user ? `${user.firstName || ''} ${user.lastName || ''} (${user.role})` : '—'}
-        </span>
         <button
-          onClick={handleLogout}
+          onClick={() => navigate('/notifications')}
+          title="Powiadomienia"
+          aria-label={`Powiadomienia${unread > 0 ? `: ${unread} nieprzeczytanych` : ''}`}
           style={{
-            background: '#374151',
-            color: '#fff',
-            border: 'none',
-            borderRadius: 6,
-            padding: '6px 10px',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 6,
             cursor: 'pointer',
-            transition: 'background 0.2s',
+            background: 'transparent',
+            border: 'none',
+            color: 'inherit',
+            padding: 0,
+            transition: 'all 0.2s',
           }}
-          onMouseEnter={e => e.currentTarget.style.background = '#4b5563'}
-          onMouseLeave={e => e.currentTarget.style.background = '#374151'}
         >
-          Wyloguj
+          <span aria-hidden="true" style={{ fontSize: 20 }}>🔔</span>
+          {unread > 0 && (
+            <span
+              style={{
+                background: '#ef4444',
+                color: '#fff',
+                borderRadius: 999,
+                padding: '2px 8px',
+                fontSize: 12,
+                fontWeight: 700,
+                minWidth: 22,
+                textAlign: 'center',
+              }}
+            >
+              {unread}
+            </span>
+          )}
         </button>
+
+        <div style={{ marginLeft: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ opacity: 0.9, fontSize: 13 }}>
+            {user ? `${user.firstName || ''} ${user.lastName || ''} (${user.role})` : '—'}
+          </span>
+          <button
+            onClick={handleLogout}
+            style={{
+              background: '#374151',
+              color: '#fff',
+              border: 'none',
+              borderRadius: 6,
+              padding: '6px 10px',
+              cursor: 'pointer',
+              transition: 'background 0.2s',
+            }}
+            onMouseEnter={e => e.currentTarget.style.background = '#4b5563'}
+            onMouseLeave={e => e.currentTarget.style.background = '#374151'}
+          >
+            Wyloguj
+          </button>
+        </div>
       </div>
     </div>
   );

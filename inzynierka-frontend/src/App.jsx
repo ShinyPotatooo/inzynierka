@@ -2,7 +2,6 @@ import React from 'react';
 import { Routes, Route, useLocation, Navigate } from 'react-router-dom';
 import './components/styles/global.css';
 
-
 import LoginPage from './pages/LoginPage';
 
 import InventoryListPage from './pages/InventoryListPage';
@@ -24,8 +23,9 @@ import { ToastContainer } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
 import { AuthProvider } from './context/AuthContext';
 
+import AdminComposeNotification from './pages/AdminComposeNotification';
 import NotificationDetailsPage from './pages/NotificationDetailsPage';
-import NotificationsPage from './pages/NotificationsPage'; // ← bez .jsx (mniej kłopotów z TS/casing)
+import NotificationsPage from './pages/NotificationsPage';
 import DictionariesPage from './pages/DictionariesPage';
 
 function LayoutWrapper({ children }) {
@@ -112,6 +112,7 @@ export default function App() {
             </PrivateRoute>
           }
         />
+
         <Route
           path="/products/new"
           element={
@@ -155,13 +156,37 @@ export default function App() {
           }
         />
 
+        {/* Composer powiadomień – dostępny dla ADMIN i MANAGER */}
+        <Route
+          path="/admin/notifications/new"
+          element={
+            <PrivateRoute allowedRoles={['admin', 'manager']}>
+              <LayoutWrapper>
+                <AdminComposeNotification />
+              </LayoutWrapper>
+            </PrivateRoute>
+          }
+        />
+
         {/* Admin panel */}
         <Route
           path="/admin"
           element={
-            <PrivateRoute requiredRole="admin">
+            <PrivateRoute allowedRoles={['admin']}>
               <LayoutWrapper>
                 <AdminPanelPage />
+              </LayoutWrapper>
+            </PrivateRoute>
+          }
+        />
+
+        {/* Słowniki */}
+        <Route
+          path="/dictionaries"
+          element={
+            <PrivateRoute allowedRoles={['admin', 'manager']}>
+              <LayoutWrapper>
+                <DictionariesPage />
               </LayoutWrapper>
             </PrivateRoute>
           }
@@ -176,16 +201,6 @@ export default function App() {
             </PrivateRoute>
           }
         />
-        <Route
-  path="/dictionaries"
-  element={
-    <PrivateRoute allowedRoles={['admin', 'manager']}>
-      <LayoutWrapper>
-        <DictionariesPage />
-      </LayoutWrapper>
-    </PrivateRoute>
-  }
-/>
       </Routes>
     </AuthProvider>
   );
