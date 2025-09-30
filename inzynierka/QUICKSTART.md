@@ -45,6 +45,20 @@ npm run db:seed
 npm run dev
 ```
 
+### 7. Test autoryzacji JWT
+```bash
+# System używa tokenów JWT do autoryzacji
+# Domyślni użytkownicy testowi:
+# - admin/password123 (pełny dostęp)
+# - manager1/password123 (zarządzanie)
+# - worker1/password123 (operacje)
+
+# Zaloguj się jako admin
+curl -X POST http://localhost:3001/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"identifier": "admin", "password": "password123"}'
+```
+
 ## ✅ Sprawdź czy wszystko działa
 
 ### Health Check
@@ -55,6 +69,21 @@ curl http://localhost:3001/health
 ### API Info
 ```bash
 curl http://localhost:3001/api
+```
+
+### Test logowania JWT
+```bash
+# Zaloguj się jako admin
+curl -X POST http://localhost:3001/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"identifier": "admin", "password": "password123"}'
+
+# Skopiuj token z odpowiedzi i użyj go w następnych zapytaniach
+# Przykład: TOKEN="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+
+# Test chronionego endpointu
+curl http://localhost:3001/api/auth/me \
+  -H "Authorization: Bearer $TOKEN"
 ```
 
 ### Test API Endpoints
@@ -159,6 +188,30 @@ cat config.env
 
 # Uruchom setup bazy danych
 npm run db:setup
+```
+
+### Problem: "Access token required" lub "Invalid token"
+```bash
+# Sprawdź czy używasz poprawnego formatu nagłówka
+# Poprawny format: Authorization: Bearer TOKEN
+
+# Sprawdź czy token nie wygasł (domyślnie 24h)
+# Zaloguj się ponownie aby uzyskać nowy token
+curl -X POST http://localhost:3001/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"identifier": "admin", "password": "password123"}'
+```
+
+### Problem: "Insufficient permissions"
+```bash
+# Sprawdź rolę użytkownika
+curl http://localhost:3001/api/auth/me \
+  -H "Authorization: Bearer $TOKEN"
+
+# Role i uprawnienia:
+# - admin: pełny dostęp
+# - manager: zarządzanie produktami, inwentarzem, odczyt użytkowników
+# - worker: operacje inwentarzowe, odczyt produktów
 ```
 
 ### Problem: "Database does not exist"

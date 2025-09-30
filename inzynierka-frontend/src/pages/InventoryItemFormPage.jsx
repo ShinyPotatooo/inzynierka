@@ -5,6 +5,7 @@ import { toast } from 'react-toastify';
 import { AuthContext } from '../context/AuthContext';
 import { getProductOptions } from '../services/products';
 import { createInventoryItem } from '../services/inventory';
+import LocationSelect from '../components/Inventory/LocationSelect';
 
 const DEBOUNCE_MS = 300;
 
@@ -27,10 +28,11 @@ export default function InventoryItemFormPage() {
   const [fetching, setFetching] = useState(false);
 
   // OTHER FIELDS
-  const [location, setLocation] = useState('');
+  const [location, setLocation] = useState(''); // <- via LocationSelect
   const [quantity, setQuantity] = useState('');
   const [reservedQuantity, setReservedQuantity] = useState('');
   const [condition, setCondition] = useState('new');
+  const [flowStatus, setFlowStatus] = useState('available');
   const [supplier, setSupplier] = useState('');
   const [batchNumber, setBatchNumber] = useState('');
   const [purchaseOrderNumber, setPurchaseOrderNumber] = useState('');
@@ -40,27 +42,20 @@ export default function InventoryItemFormPage() {
 
   const delayer = useRef(null);
 
-  /** Lokalne dopasowanie (bez dodatkowych requestów) – STABILNE */
+  /** Lokalne dopasowanie */
   const tryLocal = useCallback((value, list = []) => {
     const n = normalize(value);
-
-    // exact match całej etykiety
     const exact = list.find(o => normalize(o.label) === n);
     if (exact) return exact.id;
-
-    // po SKU w nawiasie
     const sku = extractSku(value);
     if (sku) {
       const bySku = list.find(o => normalize(o.label).endsWith(`(${normalize(sku)})`));
       if (bySku) return bySku.id;
     }
-
-    // jedyny kandydat „zawiera”
     const fuzzy = list.filter(o => normalize(o.label).includes(n));
     if (fuzzy.length === 1) return fuzzy[0].id;
-
     return null;
-  }, []); // <- brak zależności, funkcja nie zmienia referencji
+  }, []);
 
   /** 1) Ładowanie propozycji (po wpisie) */
   useEffect(() => {
@@ -76,13 +71,10 @@ export default function InventoryItemFormPage() {
     delayer.current = setTimeout(async () => {
       try {
         setFetching(true);
-        // preferuj wyszukiwanie po SKU jeśli jest w nawiasie
         const sku = extractSku(q);
         const search = sku || labelNamePart(q) || q;
-        const list = await getProductOptions(search, 20); // [{id,label}]
+        const list = await getProductOptions(search, 20);
         setOptions(list || []);
-
-        // spróbuj od razu trafić na podstawie listy z fetchu
         const local = tryLocal(q, list || []);
         setProductId(local);
       } catch (e) {
@@ -95,22 +87,16 @@ export default function InventoryItemFormPage() {
     }, DEBOUNCE_MS);
 
     return () => clearTimeout(delayer.current);
-  }, [productQuery, tryLocal]); // <- zależność od tryLocal OK, bo jest stabilny ([])
+  }, [productQuery, tryLocal]);
 
-  /** Ostatnia próba na blur: jeżeli brak ID, spróbuj SKU albo jedynego kandydata */
   const finalizeProductChoice = async () => {
-    if (productId) return; // już mamy
+    if (productId) return;
     const q = productQuery.trim();
     if (q.length < 2) return;
 
-    // najpierw jeszcze raz lokalnie (po bieżących options)
     let chosen = tryLocal(q, options);
-    if (chosen) {
-      setProductId(chosen);
-      return;
-    }
+    if (chosen) { setProductId(chosen); return; }
 
-    // fallback — spróbuj doczytać opcje po samej nazwie
     try {
       setFetching(true);
       const nameOnly = labelNamePart(q) || q;
@@ -125,7 +111,6 @@ export default function InventoryItemFormPage() {
     }
   };
 
-  /** Każda zmiana tekstu od razu próbuje sparować z lokalnymi opcjami */
   const onProductChange = (val) => {
     setProductQuery(val);
     const local = tryLocal(val, options);
@@ -135,16 +120,14 @@ export default function InventoryItemFormPage() {
   /** SUBMIT */
   const onSubmit = async (e) => {
     e.preventDefault();
-
-    // dopnij wybór z listy (na wypadek Enter bez blur)
     if (!productId) await finalizeProductChoice();
 
     if (!productId) {
       toast.warning('Wybierz produkt z listy');
       return;
     }
-    if (!location.trim()) {
-      toast.error('Lokalizacja jest wymagana');
+    if (!location) {
+      toast.error('Wybierz lokalizację ze słownika');
       return;
     }
     const qty = Number(quantity);
@@ -156,10 +139,11 @@ export default function InventoryItemFormPage() {
     try {
       const payload = {
         productId,
-        location: location.trim(),
+        location, // <- nazwa ze słownika
         quantity: qty,
         reservedQuantity: reservedQuantity ? Number(reservedQuantity) : 0,
         condition,
+        flowStatus,
         supplier: supplier || undefined,
         batchNumber: batchNumber || undefined,
         purchaseOrderNumber: purchaseOrderNumber || undefined,
@@ -221,11 +205,7 @@ export default function InventoryItemFormPage() {
 
           <div className="field">
             <label>Lokalizacja</label>
-            <input
-              value={location}
-              onChange={(e) => setLocation(e.target.value)}
-              placeholder="np. A1-01-20"
-            />
+            <LocationSelect value={location} onChange={setLocation} required />
           </div>
 
           <div className="field">
@@ -237,6 +217,18 @@ export default function InventoryItemFormPage() {
               <option value="damaged">Uszkodzony</option>
               <option value="expired">Przeterminowany</option>
             </select>
+          </div>
+
+          <div className="field">
+            <label>Status (przepływ)</label>
+            <select value={flowStatus} onChange={(e) => setFlowStatus(e.target.value)}>
+              <option value="available">available</option>
+              <option value="in_transit">in_transit</option>
+              <option value="damaged">damaged</option>
+            </select>
+            <small style={{ color:'#6b7280' }}>
+              „reserved” ustawia się automatycznie (gdy dostępna = 0 i wszystko zarezerwowane).
+            </small>
           </div>
 
           <div className="field">
@@ -321,8 +313,3 @@ export default function InventoryItemFormPage() {
     </div>
   );
 }
-
-
-
-
-

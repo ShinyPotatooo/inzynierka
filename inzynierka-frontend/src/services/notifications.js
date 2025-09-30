@@ -1,4 +1,3 @@
-// inzynierka-frontend/src/services/notifications.js
 import API from './api';
 
 const BASE = '/notifications';
@@ -8,14 +7,16 @@ export async function listNotifications({
   limit = 20,
   type,
   priority,
-  isRead,   // boolean|undefined
+  isRead,
   role = 'all',
   userId,
+  includeResolved = false,
 }) {
   const params = { page, limit, role, userId };
   if (type) params.type = type;
   if (priority) params.priority = priority;
   if (typeof isRead === 'boolean') params.isRead = isRead;
+  if (includeResolved) params.includeResolved = 1;
 
   const { data } = await API.get(BASE, { params });
   const notifications = (data?.data?.notifications ?? []).map(n => ({
@@ -49,5 +50,20 @@ export async function getNotification(id, { userId, role = 'all', markRead = fal
   const params = { userId, role };
   if (markRead) params.markRead = 1;
   const { data } = await API.get(`/notifications/${id}`, { params });
+  return data?.data?.notification;
+}
+
+/** (pozostawione – jeżeli gdzieś używasz) */
+export async function createSystemMessage(payload) {
+  const { data } = await API.post('/notifications', payload);
+  return data?.data?.notification;
+}
+
+/** ➕ NOWE: wiadomość admin/manager – typ ustawiany automatycznie na backendzie */
+export async function composeAdminManagerMessage({ title, message, priority = 'medium', audience = 'all', recipientId = null }) {
+  const { data } = await API.post('/notifications/admin-message', {
+    title, message, priority, audience, recipientId,
+  });
+  if (!data?.success) throw new Error(data?.error || 'Błąd tworzenia powiadomienia');
   return data?.data?.notification;
 }

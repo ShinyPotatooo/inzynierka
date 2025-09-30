@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { Product, InventoryItem, ActivityLog } = require('../models');
+const { authenticateToken, requireRole } = require('../middleware/auth');
 const { Op } = require('sequelize');
 
 /* ===== Helpers ===== */
@@ -87,7 +88,7 @@ router.get('/options', async (req, res) => {
 });
 
 /* ===== LIST ===== */
-router.get('/', async (req, res) => {
+router.get('/', authenticateToken, async (req, res) => {
   try {
     const {
       page = 1, limit = 10, category, brand, status, search, minPrice, maxPrice,
@@ -170,7 +171,7 @@ router.get('/:id', async (req, res) => {
 });
 
 /* ===== CREATE ===== */
-router.post('/', async (req, res) => {
+router.post('/', authenticateToken, requireRole('admin', 'manager'), async (req, res) => {
   try {
     const payload = sanitize(req.body);
 
@@ -194,7 +195,7 @@ router.post('/', async (req, res) => {
 });
 
 /* ===== UPDATE ===== */
-router.put('/:id', async (req, res) => {
+router.put('/:id', authenticateToken, requireRole('admin', 'manager'), async (req, res) => {
   try {
     const product = await Product.findByPk(req.params.id);
     if (!product) return res.status(404).json({ success: false, error: 'Product not found' });
@@ -215,7 +216,7 @@ router.put('/:id', async (req, res) => {
 });
 
 /* ===== DELETE ===== */
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', authenticateToken, requireRole('admin', 'manager'), async (req, res) => {
   try {
     const p = await Product.findByPk(req.params.id);
     if (!p) return res.status(404).json({ success: false, error: 'Product not found' });

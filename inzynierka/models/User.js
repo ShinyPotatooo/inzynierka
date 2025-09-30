@@ -80,6 +80,28 @@ module.exports = (sequelize) => {
 				allowNull: false,
 				defaultValue: DataTypes.NOW,
 			},
+			twoFactorEnabled: {
+  type: DataTypes.BOOLEAN,
+  allowNull: false,
+  defaultValue: true, // 2FA domyślnie ON; zmień na false jeśli wolisz
+},
+twoFactorEmail: {
+  type: DataTypes.STRING(255),
+  allowNull: true,
+},
+twoFactorCodeHash: {
+  type: DataTypes.STRING(255),
+  allowNull: true,
+},
+twoFactorExpiresAt: {
+  type: DataTypes.DATE,
+  allowNull: true,
+},
+twoFactorAttemptCount: {
+  type: DataTypes.INTEGER,
+  allowNull: false,
+  defaultValue: 0,
+},
 		},
 		{
 			tableName: 'users',

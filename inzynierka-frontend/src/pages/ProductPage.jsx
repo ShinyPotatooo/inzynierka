@@ -18,8 +18,8 @@ const numberOrNull = (v) => {
 
 export default function ProductPage() {
   const navigate = useNavigate();
-  const { id } = useParams(); // 'new' | ':id'
-  const isNew = id === 'new';
+  const { id } = useParams();                 // 'new' | ':id' | undefined
+  const isNew = !id || id === 'new';          // ✅ FIX: dla /products/new będzie true
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -29,7 +29,7 @@ export default function ProductPage() {
     sku: '',
     name: '',
     description: '',
-    category: '',       // <-- tekst kategorii (zgodny z kolumną w DB)
+    category: '',
     brand: '',
     unit: 'szt',
     price: '',
@@ -61,50 +61,48 @@ export default function ProductPage() {
     return () => { ignore = true; };
   }, [catQuery]);
 
-// --- załaduj produkt do edycji
-useEffect(() => {
-  let ignore = false;
+  // --- załaduj produkt do edycji
+  useEffect(() => {
+    let ignore = false;
 
-  const load = async () => {
-    // ⬇⬇⬇ kluczowa linia — nie pobieraj nic, jeśli nie ma id lub to /new
-    if (!id || id === 'new') {
-      setLoading(false);
-      return;
-    }
+    const load = async () => {
+      if (isNew) {                // ✅ dla nowego nic nie pobieramy
+        setLoading(false);
+        return;
+      }
 
-    try {
-      setLoading(true);
-      const p = await getProductById(id);
-      if (ignore) return;
-      setForm({
-        sku: p.sku || '',
-        name: p.name || '',
-        description: p.description || '',
-        category: p.category || '',
-        brand: p.brand || '',
-        unit: p.unit || 'szt',
-        price: p.price ?? '',
-        cost: p.cost ?? '',
-        minStockLevel: p.minStockLevel ?? '',
-        reorderPoint: p.reorderPoint ?? '',
-        maxStockLevel: p.maxStockLevel ?? '',
-        status: p.status || 'active',
-        weight: p.weight ?? '',
-        barcode: p.barcode || '',
-        imageUrl: p.imageUrl || '',
-      });
-    } catch (e) {
-      console.error(e);
-      toast.error(e.message || 'Błąd pobierania produktu');
-    } finally {
-      if (!ignore) setLoading(false);
-    }
-  };
+      try {
+        setLoading(true);
+        const p = await getProductById(id);
+        if (ignore) return;
+        setForm({
+          sku: p.sku || '',
+          name: p.name || '',
+          description: p.description || '',
+          category: p.category || '',
+          brand: p.brand || '',
+          unit: p.unit || 'szt',
+          price: p.price ?? '',
+          cost: p.cost ?? '',
+          minStockLevel: p.minStockLevel ?? '',
+          reorderPoint: p.reorderPoint ?? '',
+          maxStockLevel: p.maxStockLevel ?? '',
+          status: p.status || 'active',
+          weight: p.weight ?? '',
+          barcode: p.barcode || '',
+          imageUrl: p.imageUrl || '',
+        });
+      } catch (e) {
+        console.error(e);
+        toast.error(e.message || 'Błąd pobierania produktu');
+      } finally {
+        if (!ignore) setLoading(false);
+      }
+    };
 
-  load();
-  return () => { ignore = true; };
-}, [id]); // <= wystarczy samo id
-
+    load();
+    return () => { ignore = true; };
+  }, [id, isNew]);
 
   const change = (k, v) => setForm((f) => ({ ...f, [k]: v }));
 
@@ -133,17 +131,17 @@ useEffect(() => {
     try {
       setSaving(true);
 
-      // auto-utworzenie kategorii w słowniku (nie zmieniamy schematu DB – dalej zapisujemy string)
+      // auto-utworzenie kategorii w słowniku (zapis w product dalej jako string)
       const categoryText = form.category?.trim() || '';
       if (categoryText) {
-        try { await ensureCategory(categoryText); } catch (_) {}
+        try { await ensureCategory(categoryText); } catch {}
       }
 
       const payload = {
         sku: form.sku.trim(),
         name: form.name.trim(),
         description: form.description || undefined,
-        category: categoryText || undefined, // <- string jak dotychczas
+        category: categoryText || undefined,
         brand: form.brand || undefined,
         unit: form.unit || 'szt',
         price: numberOrNull(form.price),
@@ -158,17 +156,16 @@ useEffect(() => {
       };
 
       if (isNew) {
-        const created = await createProduct(payload);
+        const created = await createProduct(payload);     // POST /products
         toast.success(`Utworzono produkt (ID: ${created.id})`);
-        navigate('/products');
       } else {
-        const updated = await updateProduct(id, payload);
+        const updated = await updateProduct(id, payload); // PUT /products/:id
         toast.success(`Zapisano zmiany (ID: ${updated.id})`);
-        navigate('/products');
       }
+      navigate('/products');
     } catch (e2) {
       console.error(e2);
-      toast.error(e2.message || 'Błąd zapisu produktu');
+      toast.error(e2.response?.data?.error || e2.message || 'Błąd zapisu produktu');
     } finally {
       setSaving(false);
     }
@@ -184,7 +181,7 @@ useEffect(() => {
       navigate('/products');
     } catch (e) {
       console.error(e);
-      toast.error(e.message || 'Nie udało się usunąć produktu');
+      toast.error(e.response?.data?.error || e.message || 'Nie udało się usunąć produktu');
     } finally {
       setDeleting(false);
     }
@@ -198,7 +195,7 @@ useEffect(() => {
         <Link to="/products">← wróć do listy produktów</Link>
       </div>
 
-      <h1>{isNew ? 'Nowy produkt' : `Edycja produktu`}</h1>
+      <h1>{isNew ? 'Nowy produkt' : 'Edycja produktu'}</h1>
 
       <form onSubmit={submit} style={{ marginTop: 12 }}>
         <div
@@ -334,7 +331,6 @@ useEffect(() => {
           </div>
         </div>
 
-        {/* Hint walidacji progów */}
         <div style={{ marginTop: 8, color: '#666', fontSize: 13 }}>
           {levels.min != null || levels.re != null || levels.max != null ? (
             <>

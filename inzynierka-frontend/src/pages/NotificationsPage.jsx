@@ -1,4 +1,4 @@
-import React, { useContext, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import {
   listNotifications,
@@ -56,7 +56,7 @@ export default function NotificationsPage() {
     return undefined;
   }, [read]);
 
-  const reload = async () => {
+  const reload = useCallback(async () => {
     setLoading(true);
     try {
       const q = new URLSearchParams();
@@ -86,9 +86,11 @@ export default function NotificationsPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [type, priority, read, page, isReadBool, user?.id, user?.role, setParams]);
 
-  useEffect(() => { reload(); /* eslint-disable-next-line */ }, [type, priority, read, page, user?.id, user?.role]);
+  useEffect(() => {
+    reload();
+  }, [reload]);
 
   const notifyNavbar = () => window.dispatchEvent(new Event('notifications:update'));
 
@@ -97,7 +99,7 @@ export default function NotificationsPage() {
       await markNotificationRead(id, user?.id);
       setRows(prev =>
         read === 'unread'
-          ? prev.filter(r => r.id !== id)                        // zniknij od razu z "Nieprzeczytane"
+          ? prev.filter(r => r.id !== id)
           : prev.map(r => (r.id === id ? { ...r, isReadForUser: true } : r))
       );
       notifyNavbar();
@@ -112,7 +114,7 @@ export default function NotificationsPage() {
       await markNotificationUnread(id, user?.id);
       setRows(prev =>
         read === 'read'
-          ? prev.filter(r => r.id !== id)                        // zniknij od razu z "Przeczytane"
+          ? prev.filter(r => r.id !== id)
           : prev.map(r => (r.id === id ? { ...r, isReadForUser: false } : r))
       );
       notifyNavbar();
@@ -187,8 +189,6 @@ export default function NotificationsPage() {
                   <td style={{ padding: 10 }}>{n.type || '—'}</td>
                   <td style={{ padding: 10 }}>
                     <div style={{ fontWeight: 600 }}>
-                      {/* Kliknięcie tytułu → przejście do szczegółów
-                         oraz optymistyczne oznaczenie jako przeczytane i ukrycie z listy „Nieprzeczytane” */}
                       <Link
                         to={`/notifications/${n.id}`}
                         onClick={() => {
@@ -202,7 +202,7 @@ export default function NotificationsPage() {
                                 );
                                 notifyNavbar();
                               })
-                              .catch(() => { /* ignoruj błąd – i tak wejdziemy w szczegóły */ });
+                              .catch(() => {});
                           }
                         }}
                       >

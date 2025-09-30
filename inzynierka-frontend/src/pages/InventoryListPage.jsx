@@ -9,9 +9,11 @@ import {
   deleteInventoryItem,
 } from '../services/inventory';
 import { getProductOptions } from '../services/products';
+import { getLocationOptions } from '../services/locations';
 import { downloadInventoryCSV, downloadInventoryPDF } from '../services/download';
 import OperationModal from '../components/Inventory/OperationModal';
-import '../components/styles/InventoryListPage.css'; 
+import LocationSelect from '../components/Inventory/LocationSelect';
+import '../components/styles/InventoryListPage.css';
 
 const sorters = [
   { value: 'idAsc', label: 'ID rosnąco' },
@@ -31,6 +33,61 @@ const extractSku = (label = '') => {
 };
 const nameBeforeParen = (label = '') => String(label).split('(')[0].trim();
 
+// UI filtr – bez „reserved”
+const FLOW_STATUSES = [
+  { value: '', label: '— dowolny —' },
+  { value: 'available', label: 'Dostępny' },
+  { value: 'in_transit', label: 'W tranzycie' },
+  { value: 'damaged', label: 'Uszkodzony' },
+];
+
+function FlowBadge({ status }) {
+  const map = {
+    available: { bg: '#DCFCE7', fg: '#166534', label: 'available' },
+    in_transit: { bg: '#DBEAFE', fg: '#1E40AF', label: 'in_transit' },
+    reserved: { bg: '#FEF3C7', fg: '#92400E', label: 'reserved' },
+    damaged: { bg: '#FEE2E2', fg: '#991B1B', label: 'damaged' },
+  };
+  const s = map[status] || { bg: '#E5E7EB', fg: '#374151', label: status || '—' };
+  return (
+    <span style={{
+      background: s.bg, color: s.fg, borderRadius: 999, padding: '2px 8px',
+      fontSize: 12, fontWeight: 600, textTransform: 'none'
+    }}>
+      {s.label}
+    </span>
+  );
+}
+
+function getAutoStatus(row) {
+  const qty = Number(row?.quantity ?? 0);
+  const res = Number(row?.reservedQuantity ?? 0);
+  const available = Math.max(0, qty - res);
+  if (available <= 0) return 'empty';
+
+  const min = Number(row?.product?.minStockLevel ?? row?.product?.reorderPoint ?? 0) || 0;
+  if (min > 0 && available <= min) return 'low';
+  return null;
+}
+
+function AutoBadge({ value }) {
+  if (!value) return null;
+  const map = {
+    low:   { bg: '#FEF3C7', fg: '#92400E', label: 'low' },
+    empty: { bg: '#E5E7EB', fg: '#374151', label: 'empty' },
+  };
+  const s = map[value];
+  if (!s) return null;
+  return (
+    <span style={{
+      background: s.bg, color: s.fg, borderRadius: 999, padding: '1px 6px',
+      fontSize: 11, fontWeight: 700, textTransform: 'none'
+    }}>
+      {s.label}
+    </span>
+  );
+}
+
 export default function InventoryListPage() {
   const { user } = useContext(AuthContext);
   const userId = user?.id ?? 1;
@@ -43,13 +100,14 @@ export default function InventoryListPage() {
   const [productInput, setProductInput] = useState('');
   const [productId, setProductId] = useState(null);
   const [prodOptions, setProdOptions] = useState([]);
-  const [loc, setLoc] = useState('');
-  const [supplier, setSupplier] = useState('');
-  const [onlyLow, setOnlyLow] = useState(false);
-  const [sort, setSort] = useState('idAsc');
 
-  // --- Lp. vs ID ---
-  const [showSequential, setShowSequential] = useState(true); // true = Lp. 1..N, false = real ID
+  // lokalizacja (z podpowiedziami po 1 znaku)
+  const [loc, setLoc] = useState('');
+  const [locOptions, setLocOptions] = useState([]);
+
+  const [onlyLow, setOnlyLow] = useState(false);
+  const [flowStatus, setFlowStatus] = useState('');
+  const [sort, setSort] = useState('idAsc');
 
   // --- EDYCJA ---
   const [editId, setEditId] = useState(null);
@@ -67,14 +125,12 @@ export default function InventoryListPage() {
       const { items: list = [] } = await fetchInventoryItems({
         productId: productId || undefined,
         location: loc || undefined,
-        supplier: supplier || undefined,
         lowStock: onlyLow || undefined,
+        flowStatus: flowStatus || undefined,
         limit: 50,
       });
       setItems(Array.isArray(list) ? list : []);
-      if (onlyLow && (!list || list.length === 0)) {
-        toast.info('Brak pozycji o niskim stanie.');
-      }
+      if (onlyLow && (!list || list.length === 0)) toast.info('Brak pozycji o niskim stanie.');
     } catch (e) {
       console.error(e);
       toast.error(e.message || 'Błąd ładowania magazynu');
@@ -83,17 +139,14 @@ export default function InventoryListPage() {
     }
   };
 
-  useEffect(() => {
-    load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  useEffect(() => { load(); /* eslint-disable react-hooks/exhaustive-deps */ }, []);
 
   const visible = useMemo(() => {
     const srt = bySorter(sort);
     return Array.isArray(items) ? [...items].sort(srt) : [];
   }, [items, sort]);
 
-  // --- AUTOCOMPLETE PRODUKTU (debounce + lokalne dopasowanie) ---
+  // --- AUTOCOMPLETE PRODUKTU ---
   const timer = useRef(null);
   const inflight = useRef(null);
 
@@ -136,7 +189,7 @@ export default function InventoryListPage() {
         const list = await getProductOptions(search, 20, { signal: inflight.current.signal });
         setProdOptions(list || []);
         setProductId(findLocalId(q, list || []));
-      } catch (e) {
+      } catch (_e) {
         setProdOptions([]);
       } finally {
         inflight.current = null;
@@ -144,7 +197,7 @@ export default function InventoryListPage() {
     }, DEBOUNCE_MS);
 
     return () => clearTimeout(timer.current);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line
   }, [productInput]);
 
   const finalizeProduct = async () => {
@@ -153,19 +206,37 @@ export default function InventoryListPage() {
     if (q.length < 2) return;
 
     const local = findLocalId(q);
-    if (local) {
-      setProductId(local);
-      return;
-    }
+    if (local) { setProductId(local); return; }
 
     try {
       const list = await getProductOptions(nameBeforeParen(q) || q, 20);
       setProdOptions(list || []);
       setProductId(findLocalId(q, list || []));
-    } catch (_e) {
-      /* ignore */
-    }
+    } catch (_e) { /* ignore */ }
   };
+
+  // --- AUTOCOMPLETE LOKALIZACJI (filtr) — po 1 znaku ---
+  const locDebounce = useRef(null);
+  useEffect(() => {
+    const q = (loc || '').trim();
+    if (locDebounce.current) clearTimeout(locDebounce.current);
+
+    if (q.length < 1) {
+      setLocOptions([]);
+      return;
+    }
+
+    locDebounce.current = setTimeout(async () => {
+      try {
+        const opts = await getLocationOptions(q, 20);
+        setLocOptions(opts || []);
+      } catch (_e) {
+        setLocOptions([]);
+      }
+    }, 200);
+
+    return () => clearTimeout(locDebounce.current);
+  }, [loc]);
 
   // --- EDYCJA WIERSZA ---
   const startEdit = (row) => {
@@ -175,6 +246,7 @@ export default function InventoryListPage() {
       quantity: row.quantity,
       reservedQuantity: row.reservedQuantity,
       condition: row.condition || 'new',
+      flowStatus: row.flowStatus || 'available',
     });
   };
   const cancelEdit = () => { setEditId(null); setDraft({}); };
@@ -182,7 +254,24 @@ export default function InventoryListPage() {
 
   const saveEdit = async (id) => {
     try {
-      const payload = { ...draft, lastUpdatedBy: userId };
+      const payload = {
+        location: (draft.location || '').trim(),
+        quantity: Number(draft.quantity ?? 0),
+        reservedQuantity: Number(draft.reservedQuantity ?? 0),
+        condition: draft.condition,
+        flowStatus: draft.flowStatus,
+        lastUpdatedBy: userId,
+      };
+
+      if (!Number.isFinite(payload.quantity) || !Number.isFinite(payload.reservedQuantity)) {
+        toast.error('Podaj poprawne liczby w polach Ilość / Zarezerw.');
+        return;
+      }
+      if (payload.quantity < 0 || payload.reservedQuantity < 0) {
+        toast.error('Ilości nie mogą być ujemne.');
+        return;
+      }
+
       const updated = await updateInventoryItem(id, payload);
       setItems((prev) => prev.map((it) => (it.id === id ? { ...it, ...updated } : it)));
       toast.success('Zapisano zmiany.');
@@ -218,8 +307,8 @@ export default function InventoryListPage() {
     setProductInput('');
     setProductId(null);
     setLoc('');
-    setSupplier('');
     setOnlyLow(false);
+    setFlowStatus('');
     setSort('idAsc');
     load();
   };
@@ -228,8 +317,8 @@ export default function InventoryListPage() {
   const makeExportParams = () => ({
     productId: productId || undefined,
     location: loc || undefined,
-    supplier: supplier || undefined,
     lowStock: onlyLow || undefined,
+    flowStatus: flowStatus || undefined,
   });
 
   const onExportCSV = async () => {
@@ -253,194 +342,282 @@ export default function InventoryListPage() {
   };
 
   return (
-  <div className="inventory-page">
-    <h1>Magazyn</h1>
+    <div className="inventory-page">
+      <h1>Magazyn</h1>
 
-    {/* FILTRY */}
-    <div className="filters">
-      <input
-        list="product-filter-options"
-        placeholder="Produkt (nazwa / SKU)"
-        value={productInput}
-        onChange={(e) => { setProductInput(e.target.value); setProductId(findLocalId(e.target.value)); }}
-        onBlur={finalizeProduct}
-        style={{ minWidth: 240 }}
-      />
-      <datalist id="product-filter-options">
-        {prodOptions.map((o) => (
-          <option key={o.id} value={o.label} />
-        ))}
-      </datalist>
+      {/* FILTRY */}
+      <div className="filters">
+        <input
+          list="product-filter-options"
+          placeholder="Produkt (nazwa / SKU)"
+          value={productInput}
+          onChange={(e) => { setProductInput(e.target.value); setProductId(findLocalId(e.target.value)); }}
+          onBlur={finalizeProduct}
+          style={{ minWidth: 240 }}
+        />
+        <datalist id="product-filter-options">
+          {prodOptions.map((o) => <option key={o.id} value={o.label} />)}
+        </datalist>
 
-      <input
-        placeholder="Lokalizacja"
-        value={loc}
-        onChange={(e) => setLoc(e.target.value)}
-        style={{ minWidth: 160 }}
-      />
-      <select value={sort} onChange={(e) => setSort(e.target.value)}>
-        {sorters.map((s) => (
-          <option key={s.value} value={s.value}>{`Sort: ${s.label}`}</option>
-        ))}
-      </select>
+        {/* Lokalizacja – podpowiedzi po 1 znaku */}
+        <input
+          list="loc-filter-options"
+          placeholder="Lokalizacja"
+          value={loc}
+          onChange={(e) => setLoc(e.target.value)}
+          style={{ minWidth: 160 }}
+        />
+        <datalist id="loc-filter-options">
+          {locOptions.map(o => <option key={o.id} value={o.label} />)}
+        </datalist>
 
-      <button onClick={() => setShowSequential(v => !v)}>
-        {showSequential ? 'Pokaż ID' : 'Numeruj od 1'}
-      </button>
+        <select value={sort} onChange={(e) => setSort(e.target.value)}>
+          {sorters.map((s) => (
+            <option key={s.value} value={s.value}>{`Sort: ${s.label}`}</option>
+          ))}
+        </select>
 
-      <input
-        placeholder="Dostawca"
-        value={supplier}
-        onChange={(e) => setSupplier(e.target.value)}
-        style={{ minWidth: 160 }}
-      />
-      <label className="checkbox-label">
-        <input type="checkbox" checked={onlyLow} onChange={(e) => setOnlyLow(e.target.checked)} />
-        Niski stan
-      </label>
+        <select value={flowStatus} onChange={(e) => setFlowStatus(e.target.value)} style={{ minWidth: 170 }}>
+          {FLOW_STATUSES.map(o => <option key={o.value || 'any'} value={o.value}>{o.label}</option>)}
+        </select>
 
-      <button onClick={applyFilters}>Szukaj</button>
-      <button onClick={resetFilters}>Reset</button>
+        <label className="checkbox-label">
+          <input type="checkbox" checked={onlyLow} onChange={(e) => setOnlyLow(e.target.checked)} />
+          Niski stan
+        </label>
 
-      {/* EKSPORT */}
-      <div className="export-buttons">
-        <button onClick={onExportCSV}>Eksport CSV</button>
-        <button onClick={onExportPDF}>Eksport PDF</button>
-        <button onClick={() => navigate('/inventory/new')}>+ Dodaj pozycję</button>
+        <button onClick={applyFilters}>Szukaj</button>
+        <button onClick={resetFilters}>Reset</button>
+
+        {/* EKSPORT */}
+        <div className="export-buttons">
+          <button onClick={onExportCSV}>Eksport CSV</button>
+          <button onClick={onExportPDF}>Eksport PDF</button>
+          <button onClick={() => navigate('/inventory/new')}>+ Dodaj pozycję</button>
+        </div>
       </div>
+
+      {/* TABELA */}
+      <div className="table-wrapper">
+        <table className="inventory-table">
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Produkt</th>
+              <th>Lokalizacja</th>
+              <th>Ilość</th>
+              <th>Zarezerw.</th>
+              <th>Dostępna</th>
+              <th>Stan</th>
+              <th>Status (przepływ)</th>
+              <th>Akcje</th>
+            </tr>
+          </thead>
+          <tbody>
+            {loading ? (
+              <tr><td colSpan={9} style={{ padding: 16 }}>Ładowanie…</td></tr>
+            ) : visible.length === 0 ? (
+              <tr><td colSpan={9} style={{ padding: 16 }}>Brak pozycji</td></tr>
+            ) : (
+              visible.map((row) => {
+                const available = Math.max(0, (row.quantity || 0) - (row.reservedQuantity || 0));
+                const isEdit = editId === row.id;
+                const auto = getAutoStatus(row);
+
+                const isInTransit = row.flowStatus === 'in_transit';
+                const disableIn = isInTransit; // w tranzycie – najpierw Odbierz
+                const disableOut = isInTransit || row.flowStatus === 'damaged' || available <= 0;
+                const disableTransfer = isInTransit || row.flowStatus === 'damaged' || available <= 0;
+
+                return (
+                  <tr key={row.id}>
+                    <td style={{ width: 80 }}>{row.id}</td>
+
+                    <td>
+                      <div className="product-cell">
+                        <strong>{row.product?.name || '—'}</strong>
+                        <span className="sku">
+                          {row.product?.sku ? `(${row.product.sku})` : ''}
+                        </span>
+                      </div>
+                    </td>
+
+                    <td style={{ width: 200 }}>
+                      {isEdit ? (
+                        <LocationSelect value={draft.location} onChange={(v) => changeDraft('location', v)} />
+                      ) : (
+                        row.location || '—'
+                      )}
+                    </td>
+
+                    <td style={{ width: 120 }}>
+                      {isEdit ? (
+                        <input
+                          type="number"
+                          min={0}
+                          step={1}
+                          value={draft.quantity}
+                          onChange={(e) => changeDraft('quantity', e.target.value)}
+                          style={{ width: 100 }}
+                        />
+                      ) : (
+                        row.quantity
+                      )}
+                    </td>
+
+                    <td style={{ width: 120 }}>
+                      {isEdit ? (
+                        <input
+                          type="number"
+                          min={0}
+                          step={1}
+                          value={draft.reservedQuantity}
+                          onChange={(e) => changeDraft('reservedQuantity', e.target.value)}
+                          style={{ width: 100 }}
+                        />
+                      ) : (
+                        row.reservedQuantity
+                      )}
+                    </td>
+
+                    <td style={{ width: 100 }}>{available}</td>
+
+                    <td style={{ width: 160 }}>
+                      {isEdit ? (
+                        <select
+                          value={draft.condition}
+                          onChange={(e) => changeDraft('condition', e.target.value)}
+                        >
+                          <option value="new">Nowy</option>
+                          <option value="good">Dobry</option>
+                          <option value="fair">Umiarkowany</option>
+                          <option value="damaged">Uszkodzony</option>
+                          <option value="expired">Przeterminowany</option>
+                        </select>
+                      ) : (
+                        row.condition || '—'
+                      )}
+                    </td>
+
+                    <td style={{ width: 220 }}>
+                      {isEdit ? (
+                        <div style={{ display: 'grid', gap: 6 }}>
+                          <select
+                            value={draft.flowStatus}
+                            onChange={(e) => changeDraft('flowStatus', e.target.value)}
+                          >
+                            <option value="available">available</option>
+                            <option value="in_transit">in_transit</option>
+                            <option value="damaged">damaged</option>
+                          </select>
+                          <div style={{ fontSize: 12, color: '#6b7280' }}>
+                            auto:{' '}<AutoBadge value={getAutoStatus({ ...row, ...draft })} />
+                          </div>
+                        </div>
+                      ) : (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                          <FlowBadge status={row.flowStatus} />
+                          {auto && (
+                            <>
+                              <span style={{ fontSize: 12, color: '#6b7280' }}>auto:</span>
+                              <AutoBadge value={auto} />
+                            </>
+                          )}
+                        </div>
+                      )}
+                    </td>
+
+                    <td className="actions-cell">
+                      <div className="actions">
+                        {isEdit ? (
+                          <>
+                            <button className="btn btn-primary" onClick={() => saveEdit(row.id)}>Zapisz</button>
+                            <button className="btn" onClick={cancelEdit}>Anuluj</button>
+                          </>
+                        ) : (
+                          <>
+                            {/* Odbiór z tranzytu – tylko gdy in_transit */}
+                            {isInTransit && (
+                              <button
+                                className="btn btn-primary"
+                                onClick={() => openOp(row, 'receive')}
+                                title="Oznacz pozycję jako odebraną (in_transit → available)"
+                              >
+                                Odbierz
+                              </button>
+                            )}
+
+                            {/* Pozostałe operacje – wyszarzone w tranzycie */}
+                            <button
+                              className="btn"
+                              onClick={() => openOp(row, 'in')}
+                              disabled={disableIn}
+                              title={disableIn ? 'Pozycja w tranzycie — najpierw Odbierz' : ''}
+                            >
+                              Przyjęcie
+                            </button>
+
+                            <button
+                              className="btn"
+                              onClick={() => openOp(row, 'out')}
+                              disabled={disableOut}
+                              title={
+                                isInTransit
+                                  ? 'Pozycja w tranzycie — najpierw Odbierz'
+                                  : (row.flowStatus === 'damaged'
+                                      ? 'Pozycja uszkodzona'
+                                      : (available <= 0 ? 'Brak dostępnej ilości' : ''))
+                              }
+                            >
+                              Wydanie
+                            </button>
+
+                            <button
+                              className="btn"
+                              onClick={() => openOp(row, 'transfer')}
+                              disabled={disableTransfer}
+                              title={
+                                isInTransit
+                                  ? 'Pozycja w tranzycie — najpierw Odbierz'
+                                  : (row.flowStatus === 'damaged'
+                                      ? 'Pozycja uszkodzona'
+                                      : (available <= 0 ? 'Brak dostępnej ilości' : ''))
+                              }
+                            >
+                              Przenieś
+                            </button>
+
+                            <button className="btn" onClick={() => startEdit(row)}>Edytuj</button>
+                            <Link className="linklike" to={`/inventory/${row.id}`}>Szczegóły</Link>
+                            <button className="btn danger" onClick={() => removeRow(row)}>Usuń</button>
+                          </>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Pasek zapisu – w trybie edycji */}
+      {editId && (
+        <div className="edit-floating-bar">
+          <span>Edytujesz pozycję #{editId}</span>
+          <button className="btn btn-primary" onClick={() => saveEdit(editId)}>Zapisz</button>
+          <button className="btn" onClick={cancelEdit}>Anuluj</button>
+        </div>
+      )}
+
+      <OperationModal
+        open={opModal.open}
+        type={opModal.type}
+        item={opModal.item}
+        onClose={closeOp}
+        onDone={load}
+      />
     </div>
-
-    {/* TABELA */}
-    <div className="table-wrapper">
-      <table className="inventory-table">
-        <thead>
-          <tr>
-            <th>{showSequential ? 'Lp.' : 'ID'}</th>
-            <th>Produkt</th>
-            <th>Lokalizacja</th>
-            <th>Ilość</th>
-            <th>Zarezerw.</th>
-            <th>Dostępna</th>
-            <th>Stan</th>
-            <th>Akcje</th>
-          </tr>
-        </thead>
-        <tbody>
-          {loading ? (
-            <tr><td colSpan={8} style={{ padding: 16 }}>Ładowanie…</td></tr>
-          ) : visible.length === 0 ? (
-            <tr><td colSpan={8} style={{ padding: 16 }}>Brak pozycji</td></tr>
-          ) : (
-            visible.map((row, idx) => {
-              const available = (row.quantity || 0) - (row.reservedQuantity || 0);
-              const isEdit = editId === row.id;
-
-              return (
-                <tr key={row.id}>
-                  <td style={{ width: 60 }}>
-                    {showSequential ? (idx + 1) : row.id}
-                  </td>
-
-                  <td>
-                    <div className="product-cell">
-                      <strong>{row.product?.name || '—'}</strong>
-                      <span className="sku">
-                        {row.product?.sku ? `(${row.product.sku})` : ''}
-                      </span>
-                    </div>
-                  </td>
-
-                  <td style={{ width: 160 }}>
-                    {isEdit ? (
-                      <input
-                        value={draft.location}
-                        onChange={(e) => changeDraft('location', e.target.value)}
-                      />
-                    ) : (
-                      row.location || '—'
-                    )}
-                  </td>
-
-                  <td style={{ width: 120 }}>
-                    {isEdit ? (
-                      <input
-                        type="number"
-                        min={0}
-                        step={1}
-                        value={draft.quantity}
-                        onChange={(e) => changeDraft('quantity', e.target.value)}
-                        style={{ width: 100 }}
-                      />
-                    ) : (
-                      row.quantity
-                    )}
-                  </td>
-
-                  <td style={{ width: 120 }}>
-                    {isEdit ? (
-                      <input
-                        type="number"
-                        min={0}
-                        step={1}
-                        value={draft.reservedQuantity}
-                        onChange={(e) => changeDraft('reservedQuantity', e.target.value)}
-                        style={{ width: 100 }}
-                      />
-                    ) : (
-                      row.reservedQuantity
-                    )}
-                  </td>
-
-                  <td style={{ width: 100 }}>{available}</td>
-
-                  <td style={{ width: 160 }}>
-                    {isEdit ? (
-                      <select
-                        value={draft.condition}
-                        onChange={(e) => changeDraft('condition', e.target.value)}
-                      >
-                        <option value="new">Nowy</option>
-                        <option value="good">Dobry</option>
-                        <option value="fair">Umiarkowany</option>
-                        <option value="damaged">Uszkodzony</option>
-                        <option value="expired">Przeterminowany</option>
-                      </select>
-                    ) : (
-                      row.condition || '—'
-                    )}
-                  </td>
-
-                  <td style={{ minWidth: 360 }}>
-                    {isEdit ? (
-                      <>
-                        <button onClick={() => saveEdit(row.id)}>Zapisz</button>
-                        <button onClick={cancelEdit}>Anuluj</button>
-                      </>
-                    ) : (
-                      <>
-                        <button onClick={() => openOp(row, 'in')}>Przyjęcie</button>
-                        <button onClick={() => openOp(row, 'out')}>Wydanie</button>
-                        <button onClick={() => startEdit(row)}>Edytuj</button>
-                        <Link to={`/inventory/${row.id}`}>Szczegóły</Link>
-                        <button className="delete-btn" onClick={() => removeRow(row)}>Usuń</button>
-                      </>
-                    )}
-                  </td>
-                </tr>
-              );
-            })
-          )}
-        </tbody>
-      </table>
-    </div>
-
-    <OperationModal
-      open={opModal.open}
-      type={opModal.type}
-      item={opModal.item}
-      onClose={closeOp}
-      onDone={load}
-    />
-  </div>
-);
+  );
 }

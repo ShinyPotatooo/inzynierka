@@ -1,9 +1,9 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { Routes, Route, useLocation, Navigate } from 'react-router-dom';
 import './components/styles/global.css';
 
-
 import LoginPage from './pages/LoginPage';
+import TwoFactorPage from './pages/TwoFactorPage';
 
 import InventoryListPage from './pages/InventoryListPage';
 import InventoryItemFormPage from './pages/InventoryItemFormPage';
@@ -23,14 +23,17 @@ import PrivateRoute from './components/PrivateRoute';
 import { ToastContainer } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
 import { AuthProvider } from './context/AuthContext';
+import { initAuthHeaderFromStorage } from './services/auth';
 
+import AdminComposeNotification from './pages/AdminComposeNotification';
 import NotificationDetailsPage from './pages/NotificationDetailsPage';
-import NotificationsPage from './pages/NotificationsPage'; // ← bez .jsx (mniej kłopotów z TS/casing)
+import NotificationsPage from './pages/NotificationsPage';
 import DictionariesPage from './pages/DictionariesPage';
 
 function LayoutWrapper({ children }) {
   const location = useLocation();
-  const hideNavbar = location.pathname === '/';
+  // Ukrywamy navbar na stronach publicznych: login i 2FA
+  const hideNavbar = location.pathname === '/' || location.pathname === '/2fa';
   return (
     <>
       {!hideNavbar && <Navbar />}
@@ -40,12 +43,18 @@ function LayoutWrapper({ children }) {
 }
 
 export default function App() {
+  // Ustaw nagłówek Authorization z localStorage przy starcie appki
+  useEffect(() => {
+    initAuthHeaderFromStorage();
+  }, []);
+
   return (
     <AuthProvider>
       <ToastContainer />
       <Routes>
-        {/* Login */}
+        {/* Publiczne */}
         <Route path="/" element={<LoginPage />} />
+        <Route path="/2fa" element={<TwoFactorPage />} />
 
         {/* Dashboard */}
         <Route
@@ -112,6 +121,7 @@ export default function App() {
             </PrivateRoute>
           }
         />
+
         <Route
           path="/products/new"
           element={
@@ -155,13 +165,37 @@ export default function App() {
           }
         />
 
+        {/* Composer powiadomień – dostępny dla ADMIN i MANAGER */}
+        <Route
+          path="/admin/notifications/new"
+          element={
+            <PrivateRoute allowedRoles={['admin', 'manager']}>
+              <LayoutWrapper>
+                <AdminComposeNotification />
+              </LayoutWrapper>
+            </PrivateRoute>
+          }
+        />
+
         {/* Admin panel */}
         <Route
           path="/admin"
           element={
-            <PrivateRoute requiredRole="admin">
+            <PrivateRoute allowedRoles={['admin']}>
               <LayoutWrapper>
                 <AdminPanelPage />
+              </LayoutWrapper>
+            </PrivateRoute>
+          }
+        />
+
+        {/* Słowniki */}
+        <Route
+          path="/dictionaries"
+          element={
+            <PrivateRoute allowedRoles={['admin', 'manager']}>
+              <LayoutWrapper>
+                <DictionariesPage />
               </LayoutWrapper>
             </PrivateRoute>
           }
@@ -176,16 +210,6 @@ export default function App() {
             </PrivateRoute>
           }
         />
-        <Route
-  path="/dictionaries"
-  element={
-    <PrivateRoute allowedRoles={['admin', 'manager']}>
-      <LayoutWrapper>
-        <DictionariesPage />
-      </LayoutWrapper>
-    </PrivateRoute>
-  }
-/>
       </Routes>
     </AuthProvider>
   );
