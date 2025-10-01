@@ -1,8 +1,9 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { Routes, Route, useLocation, Navigate } from 'react-router-dom';
 import './components/styles/global.css';
 
 import LoginPage from './pages/LoginPage';
+import TwoFactorPage from './pages/TwoFactorPage';
 
 import InventoryListPage from './pages/InventoryListPage';
 import InventoryItemFormPage from './pages/InventoryItemFormPage';
@@ -22,6 +23,7 @@ import PrivateRoute from './components/PrivateRoute';
 import { ToastContainer } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
 import { AuthProvider } from './context/AuthContext';
+import { initAuthHeaderFromStorage } from './services/auth';
 
 import AdminComposeNotification from './pages/AdminComposeNotification';
 import NotificationDetailsPage from './pages/NotificationDetailsPage';
@@ -30,7 +32,8 @@ import DictionariesPage from './pages/DictionariesPage';
 
 function LayoutWrapper({ children }) {
   const location = useLocation();
-  const hideNavbar = location.pathname === '/';
+  // Ukrywamy navbar na stronach publicznych: login i 2FA
+  const hideNavbar = location.pathname === '/' || location.pathname === '/2fa';
   return (
     <>
       {!hideNavbar && <Navbar />}
@@ -40,12 +43,18 @@ function LayoutWrapper({ children }) {
 }
 
 export default function App() {
+  // Ustaw nagłówek Authorization z localStorage przy starcie appki
+  useEffect(() => {
+    initAuthHeaderFromStorage();
+  }, []);
+
   return (
     <AuthProvider>
       <ToastContainer />
       <Routes>
-        {/* Login */}
+        {/* Publiczne */}
         <Route path="/" element={<LoginPage />} />
+        <Route path="/2fa" element={<TwoFactorPage />} />
 
         {/* Dashboard */}
         <Route
