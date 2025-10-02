@@ -1,12 +1,22 @@
+// routes/notifications.js
 const express = require('express');
 const router = express.Router();
-const { sequelize, Notification, Product, User, NotificationState } = require('../models');
+const {
+  sequelize,
+  Notification,
+  Product,
+  User,
+  NotificationState,
+} = require('../models');
+const { Op } = require('sequelize');
 const { authenticateToken, requireRole } = require('../middleware/auth');
 
 /* --------------------------------- */
 /* Helpers                           */
 /* --------------------------------- */
 
+// Admin widzi wszystko; inni widzą powiadomienia
+// skierowane konkretnie DO nich (userId = odbiorca) LUB po roli (all / ich rola / null).
 const audienceSql = (alias = 'n') => `
 (
   :isAdmin = TRUE
@@ -23,14 +33,20 @@ const noCache = (res) => {
   res.set('Expires', '0');
 };
 
+function clampPriority(p) {
+  const allowed = new Set(['low', 'medium', 'high', 'urgent']);
+  return allowed.has(p) ? p : 'medium';
+}
+
 /* --------------------------------- */
 /* 🔔 Unread counter                  */
 /* --------------------------------- */
+// GET /api/notifications/unread/count
 router.get('/unread/count', async (req, res) => {
   try {
     const userId = req.query.userId ? Number(req.query.userId) : null;
     const role = String(req.query.role || 'all');
-    const isAdmin = (role === 'admin');
+    const isAdmin = role === 'admin';
     noCache(res);
 
     const [[row]] = await sequelize.query(
@@ -60,6 +76,7 @@ router.get('/unread/count', async (req, res) => {
 /* --------------------------------- */
 /* 📄 List (z filtrami, per-user read) */
 /* --------------------------------- */
+// GET /api/notifications
 router.get('/', async (req, res) => {
   try {
     const page = Math.max(1, Number(req.query.page || 1));
@@ -67,42 +84,56 @@ router.get('/', async (req, res) => {
     const offset = (page - 1) * limit;
 
     const role = String(req.query.role || 'all');
-    const isAdmin = (role === 'admin');
+    const isAdmin = role === 'admin';
     const userId = req.query.userId ? Number(req.query.userId) : null;
-    const isReadParam = typeof req.query.isRead === 'string' ? req.query.isRead : null;
+    const isReadParam = typeof req.query.isRead === 'string' ? req.query.isRead : null; // 'true'|'false'|null
     const type = req.query.type || null;
     const priority = req.query.priority || null;
+    const includeResolved = String(req.query.includeResolved || '') === '1';
 
     noCache(res);
 
     const whereParts = [audienceSql('n')];
     const repl = { role, userId, isAdmin };
 
-    if (type)     { whereParts.push(`n."type" = :type`);         repl.type = type; }
+    if (type) { whereParts.push(`n."type" = :type`); repl.type = type; }
     if (priority) { whereParts.push(`n."priority" = :priority`); repl.priority = priority; }
+    if (!includeResolved) {
+      whereParts.push(`(n."metadata"->>'resolved') IS NULL`);
+    }
 
     if (userId) {
       if (isReadParam === 'true') {
         whereParts.push(`
-          EXISTS (SELECT 1 FROM notification_states s
-                  WHERE s."notificationId" = n."id" AND s."userId" = :userId AND s."isRead" = TRUE)
+          EXISTS (
+            SELECT 1 FROM notification_states s
+            WHERE s."notificationId" = n."id"
+              AND s."userId" = :userId
+              AND s."isRead" = TRUE
+          )
         `);
       } else if (isReadParam === 'false') {
         whereParts.push(`
-          NOT EXISTS (SELECT 1 FROM notification_states s
-                      WHERE s."notificationId" = n."id" AND s."userId" = :userId AND s."isRead" = TRUE)
+          NOT EXISTS (
+            SELECT 1 FROM notification_states s
+            WHERE s."notificationId" = n."id"
+              AND s."userId" = :userId
+              AND s."isRead" = TRUE
+          )
         `);
       }
     }
 
     const whereSql = whereParts.length ? `WHERE ${whereParts.join(' AND ')}` : '';
 
+    // count
     const [[countRow]] = await sequelize.query(
       `SELECT COUNT(*)::int AS count FROM notifications n ${whereSql};`,
       { replacements: repl }
     );
     const totalItems = countRow.count;
 
+    // page ids
     const [idRows] = await sequelize.query(
       `
       SELECT n.id
@@ -121,7 +152,7 @@ router.get('/', async (req, res) => {
         where: { id: ids },
         include: [
           { model: Product, as: 'product', attributes: ['id', 'sku', 'name'] },
-          { model: User,    as: 'user',    attributes: ['id', 'username', 'firstName', 'lastName'] },
+          { model: User, as: 'user', attributes: ['id', 'username', 'firstName', 'lastName'] }, // <- gdy userId != null to oznacza adresata
           ...(userId ? [{
             model: NotificationState,
             as: 'states',
@@ -163,11 +194,12 @@ router.get('/', async (req, res) => {
 /* --------------------------------- */
 /* 🧹 Mark-all read (per-user)       */
 /* --------------------------------- */
+// POST /api/notifications/mark-all-read
 router.post('/mark-all-read', async (req, res) => {
   try {
     const userId = Number(req.body.userId || req.query.userId);
     const role = String(req.body.role || req.query.role || 'all');
-    const isAdmin = (role === 'admin');
+    const isAdmin = role === 'admin';
     if (!userId) return res.status(400).json({ success: false, error: 'userId required' });
 
     const [rows] = await sequelize.query(
@@ -206,6 +238,7 @@ router.post('/mark-all-read', async (req, res) => {
 /* --------------------------------- */
 /* ✅ Mark single read/unread         */
 /* --------------------------------- */
+// PATCH /api/notifications/:id/read
 router.patch('/:id/read', async (req, res) => {
   try {
     const id = Number(req.params.id);
@@ -226,6 +259,7 @@ router.patch('/:id/read', async (req, res) => {
   }
 });
 
+// PATCH /api/notifications/:id/unread
 router.patch('/:id/unread', async (req, res) => {
   try {
     const id = Number(req.params.id);
@@ -243,16 +277,18 @@ router.patch('/:id/unread', async (req, res) => {
 /* --------------------------------- */
 /* 🔎 Details (with per-user state)   */
 /* --------------------------------- */
+// GET /api/notifications/:id
 router.get('/:id', async (req, res) => {
   try {
     const id = Number(req.params.id);
     const role = String(req.query.role || 'all');
-    const isAdmin = (role === 'admin');
+    const isAdmin = role === 'admin';
     const userId = req.query.userId ? Number(req.query.userId) : null;
     const markRead = String(req.query.markRead || '') === '1';
 
     noCache(res);
 
+    // sprawdź audytorium
     const [[existsRow]] = await sequelize.query(
       `SELECT 1 FROM notifications n WHERE n.id = :id AND ${audienceSql('n')} LIMIT 1`,
       { replacements: { id, role, userId, isAdmin } }
@@ -264,7 +300,7 @@ router.get('/:id', async (req, res) => {
     const notif = await Notification.findByPk(id, {
       include: [
         { model: Product, as: 'product', attributes: ['id', 'sku', 'name'] },
-        { model: User,    as: 'user',    attributes: ['id', 'username', 'firstName', 'lastName'] },
+        { model: User, as: 'user', attributes: ['id', 'username', 'firstName', 'lastName'] }, // <- gdy userId != null to adresat
         ...(userId ? [{
           model: NotificationState,
           as: 'states',
@@ -301,63 +337,78 @@ router.get('/:id', async (req, res) => {
 });
 
 /* --------------------------------- */
-/* ✉️  NOWE: wiadomość admin/manager */
+/* ✉️ Create: admin/manager message   */
 /* --------------------------------- */
-// POST /api/notifications/admin-message
-// body: { title, message, priority='medium', audience:'all'|'manager'|'worker'|'user', recipientId? }
-router.post(
-  '/admin-message',
-  authenticateToken,
-  requireRole('admin', 'manager'),
-  async (req, res) => {
-    try {
-      const author = req.user;
-      const { title, message, priority = 'medium', audience = 'all', recipientId } = req.body;
+// POST /api/notifications
+// Tworzenie wiadomości przez admin/managera:
+// - typ jest wymuszony: 'admin_message' dla admina, 'manager_message' dla managera
+// - można wysłać do roli (targetRole) LUB do konkretnego usera (targetUserId)
+// - userId w rekordzie oznacza ADRESATA (zgodnie z audienceSql powyżej)
+router.post('/', authenticateToken, requireRole('admin', 'manager'), async (req, res) => {
+  try {
+    const author = req.user; // z JWT
+    const authorRole = String(author.role || '').toLowerCase();
+    const enforcedType = authorRole === 'admin' ? 'admin_message' : 'manager_message';
 
-      if (!title || !message) {
-        return res.status(400).json({ success: false, error: 'Tytuł i treść są wymagane' });
-      }
-      if (!['low', 'medium', 'high', 'urgent'].includes(priority)) {
-        return res.status(400).json({ success: false, error: 'Nieprawidłowy priority' });
-      }
-      if (!['all', 'manager', 'worker', 'user'].includes(audience)) {
-        return res.status(400).json({ success: false, error: 'Nieprawidłowy audience' });
-      }
+    const {
+      title,
+      message = '',
+      priority = 'medium',
+      targetRole,      // 'admin'|'manager'|'worker'|'all' (opcjonalnie, gdy brak targetUserId)
+      targetUserId,    // liczba (opcjonalnie: preferowane przy wysyłce do 1 usera)
+      productId,       // opcjonalnie
+      scheduledAt,     // opcjonalnie (ISO)
+      metadata = null, // opcjonalnie
+    } = req.body;
 
-      const type = author.role === 'admin' ? 'admin_message' : 'manager_message';
-
-      const payload = {
-        type,
-        title,
-        message,
-        priority,
-        productId: null,
-        targetRole: null,
-        userId: null,
-        metadata: { createdBy: author.id, createdByRole: author.role },
-      };
-
-      if (audience === 'user') {
-        const uid = Number(recipientId);
-        if (!uid) return res.status(400).json({ success: false, error: 'recipientId jest wymagane' });
-        const u = await User.findByPk(uid);
-        if (!u) return res.status(400).json({ success: false, error: 'Nie znaleziono użytkownika' });
-        payload.userId = uid;
-      } else if (audience === 'all') {
-        payload.targetRole = 'all';
-      } else if (audience === 'manager') {
-        payload.targetRole = 'manager';
-      } else if (audience === 'worker') {
-        payload.targetRole = 'worker';
-      }
-
-      const notif = await Notification.create(payload);
-      return res.status(201).json({ success: true, data: { notification: notif } });
-    } catch (err) {
-      console.error('Create admin/manager message error:', err);
-      return res.status(500).json({ success: false, error: 'Internal server error' });
+    if (!title || !String(title).trim()) {
+      return res.status(400).json({ success: false, error: 'title is required' });
     }
+
+    let recipientUserId = null;
+    let audienceRole = null;
+
+    if (Number.isFinite(Number(targetUserId))) {
+      recipientUserId = Number(targetUserId);
+      // sanity check czy user istnieje (opcjonalnie)
+      const exists = await User.findByPk(recipientUserId, { attributes: ['id'] });
+      if (!exists) {
+        return res.status(400).json({ success: false, error: 'Target user not found' });
+      }
+    } else {
+      audienceRole = ['admin', 'manager', 'worker', 'all'].includes(String(targetRole))
+        ? String(targetRole)
+        : 'all';
+    }
+
+    const payload = {
+      type: enforcedType,
+      title: String(title).trim().slice(0, 200),
+      message: String(message || ''),
+      userId: recipientUserId,             // <- cel dla jednego odbiorcy
+      targetRole: recipientUserId ? null : audienceRole, // <- cel dla roli (gdy brak usera)
+      priority: clampPriority(String(priority)),
+      productId: productId || null,
+      scheduledAt: scheduledAt ? new Date(scheduledAt) : null,
+      isSent: false,
+      isRead: false,
+      metadata: {
+        ...(metadata || {}),
+        authorId: author.id,
+        authorRole: authorRole,
+      },
+    };
+
+    const notif = await Notification.create(payload);
+
+    res.status(201).json({
+      success: true,
+      data: { notification: notif },
+    });
+  } catch (err) {
+    console.error('Create notification error:', err);
+    res.status(500).json({ success: false, error: 'Internal server error' });
   }
-);
+});
 
 module.exports = router;

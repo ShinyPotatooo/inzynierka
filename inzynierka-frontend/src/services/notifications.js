@@ -1,3 +1,4 @@
+// src/services/notifications.js
 import API from './api';
 
 const BASE = '/notifications';
@@ -7,10 +8,10 @@ export async function listNotifications({
   limit = 20,
   type,
   priority,
-  isRead,
+  isRead,   // boolean|undefined
   role = 'all',
   userId,
-  includeResolved = false,
+  includeResolved = false, // domyślnie pomijamy resolved
 }) {
   const params = { page, limit, role, userId };
   if (type) params.type = type;
@@ -53,17 +54,36 @@ export async function getNotification(id, { userId, role = 'all', markRead = fal
   return data?.data?.notification;
 }
 
-/** (pozostawione – jeżeli gdzieś używasz) */
-export async function createSystemMessage(payload) {
-  const { data } = await API.post('/notifications', payload);
-  return data?.data?.notification;
-}
-
-/** ➕ NOWE: wiadomość admin/manager – typ ustawiany automatycznie na backendzie */
-export async function composeAdminManagerMessage({ title, message, priority = 'medium', audience = 'all', recipientId = null }) {
-  const { data } = await API.post('/notifications/admin-message', {
-    title, message, priority, audience, recipientId,
+/** Ręczne tworzenie powiadomienia (admin/manager) */
+export async function createSystemMessage({
+  authorId,
+  role, // 'admin' | 'manager'
+  title,
+  message,
+  priority = 'medium',
+  // typ jest wymuszany po stronie backendu: admin_message / manager_message
+  targetRole = 'all', // 'admin'|'manager'|'worker'|'all'  (opcjonalne, gdy brak targetUserId)
+  targetUserId,       // opcjonalnie: pojedynczy odbiorca (wybierany po nazwie na UI)
+  productId,          // opcjonalnie: powiązanie z produktem
+  scheduledAt,        // opcjonalnie: data przyszła (ISO/string)
+  metadata,           // opcjonalnie
+}) {
+  const { data } = await API.post('/notifications', {
+    authorId, role, title, message, priority,
+    targetRole, targetUserId, productId, scheduledAt, metadata,
   });
   if (!data?.success) throw new Error(data?.error || 'Błąd tworzenia powiadomienia');
   return data?.data?.notification;
 }
+
+/* Opcjonalnie, jeśli korzystasz:
+export async function updateNotification(id, payload) {
+  const { data } = await API.patch(`/notifications/${id}`, payload);
+  return data?.data?.notification;
+}
+
+export async function deleteNotification(id, role) {
+  const { data } = await API.delete(`/notifications/${id}`, { data: { role } });
+  return data?.data;
+}
+*/
