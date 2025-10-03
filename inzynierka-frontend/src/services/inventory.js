@@ -1,5 +1,14 @@
 import API from './api';
 
+/** Pomocniczo: autoStatus po ILOŚCI (quantity) — zwraca 'empty' | 'low' | null */
+function computeAutoStatusByQuantity(row) {
+  const qty = Number(row?.quantity ?? 0);
+  if (qty === 0) return 'empty';
+  const min = Number(row?.product?.minStockLevel ?? row?.product?.reorderPoint ?? 0) || 0;
+  if (min > 0 && qty <= min) return 'low';
+  return null; // było 'ok' -> zmieniamy na null, żeby nic nie renderować
+}
+
 /** Lista pozycji magazynowych z paginacją */
 export async function fetchInventoryItems(params = {}) {
   const res = await API.get('/inventory', {
@@ -15,15 +24,27 @@ export async function fetchInventoryItems(params = {}) {
     },
   });
   if (!res.data?.success) throw new Error(res.data?.error || 'Błąd pobierania listy');
+
   const { inventoryItems, pagination } = res.data.data || {};
+  const items = Array.isArray(inventoryItems)
+    ? inventoryItems.map((it) => {
+        // jeśli backend nie ma autoStatus, policz lokalnie
+        let auto = it?.autoStatus ?? computeAutoStatusByQuantity(it);
+        // jeżeli backend jednak zwrócił 'ok', zamieniamy na null (brak badge)
+        if (auto === 'ok') auto = null;
+        return { ...it, autoStatus: auto };
+      })
+    : [];
+
   return {
-    items: inventoryItems || [],
-    pagination: pagination || {
-      currentPage: 1,
-      totalPages: 1,
-      totalItems: 0,
-      itemsPerPage: params.limit ?? 50,
-    },
+    items,
+    pagination:
+      pagination || {
+        currentPage: 1,
+        totalPages: 1,
+        totalItems: 0,
+        itemsPerPage: params.limit ?? 50,
+      },
   };
 }
 
@@ -71,7 +92,6 @@ export async function createInventoryTransfer(payload) {
 
 /** Odbiór z tranzytu (flowStatus: in_transit -> available, bez zmiany ilości) */
 export async function receiveInTransit(payload) {
-  // payload: { inventoryItemId, userId?, operationDate?, notes? }
   const res = await API.post('/inventory/receive', payload);
   if (!res.data?.success) throw new Error(res.data?.error || 'Błąd oznaczenia odbioru');
   return res.data.data;

@@ -33,7 +33,6 @@ const extractSku = (label = '') => {
 };
 const nameBeforeParen = (label = '') => String(label).split('(')[0].trim();
 
-// UI filtr – bez „reserved”
 const FLOW_STATUSES = [
   { value: '', label: '— dowolny —' },
   { value: 'available', label: 'Dostępny' },
@@ -45,28 +44,28 @@ function FlowBadge({ status }) {
   const map = {
     available: { bg: '#DCFCE7', fg: '#166534', label: 'available' },
     in_transit: { bg: '#DBEAFE', fg: '#1E40AF', label: 'in_transit' },
-    reserved: { bg: '#FEF3C7', fg: '#92400E', label: 'reserved' },
-    damaged: { bg: '#FEE2E2', fg: '#991B1B', label: 'damaged' },
+    reserved:   { bg: '#FEF3C7', fg: '#92400E', label: 'reserved' },
+    damaged:    { bg: '#FEE2E2', fg: '#991B1B', label: 'damaged' },
   };
   const s = map[status] || { bg: '#E5E7EB', fg: '#374151', label: status || '—' };
   return (
-    <span style={{
-      background: s.bg, color: s.fg, borderRadius: 999, padding: '2px 8px',
-      fontSize: 12, fontWeight: 600, textTransform: 'none'
-    }}>
+    <span style={{ background: s.bg, color: s.fg, borderRadius: 999, padding: '2px 8px', fontSize: 12, fontWeight: 600 }}>
       {s.label}
     </span>
   );
 }
 
+/** autoStatus: jeśli backend przysłał 'ok', traktujemy to jak BRAK statusu */
 function getAutoStatus(row) {
-  const qty = Number(row?.quantity ?? 0);
-  const res = Number(row?.reservedQuantity ?? 0);
-  const available = Math.max(0, qty - res);
-  if (available <= 0) return 'empty';
+  const v = row?.autoStatus;
+  if (v === 'ok') return null;
+  if (v) return v;
 
+  // fallback (gdy brak w payloadzie) — liczymy po QUANTITY
+  const qty = Number(row?.quantity ?? 0);
+  if (qty === 0) return 'empty';
   const min = Number(row?.product?.minStockLevel ?? row?.product?.reorderPoint ?? 0) || 0;
-  if (min > 0 && available <= min) return 'low';
+  if (min > 0 && qty <= min) return 'low';
   return null;
 }
 
@@ -79,10 +78,7 @@ function AutoBadge({ value }) {
   const s = map[value];
   if (!s) return null;
   return (
-    <span style={{
-      background: s.bg, color: s.fg, borderRadius: 999, padding: '1px 6px',
-      fontSize: 11, fontWeight: 700, textTransform: 'none'
-    }}>
+    <span style={{ background: s.bg, color: s.fg, borderRadius: 999, padding: '1px 6px', fontSize: 11, fontWeight: 700 }}>
       {s.label}
     </span>
   );
@@ -96,12 +92,10 @@ export default function InventoryListPage() {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  // --- FILTRY ---
   const [productInput, setProductInput] = useState('');
   const [productId, setProductId] = useState(null);
   const [prodOptions, setProdOptions] = useState([]);
 
-  // lokalizacja (z podpowiedziami po 1 znaku)
   const [loc, setLoc] = useState('');
   const [locOptions, setLocOptions] = useState([]);
 
@@ -109,16 +103,13 @@ export default function InventoryListPage() {
   const [flowStatus, setFlowStatus] = useState('');
   const [sort, setSort] = useState('idAsc');
 
-  // --- EDYCJA ---
   const [editId, setEditId] = useState(null);
   const [draft, setDraft] = useState({});
 
-  // --- MODAL OPERACJI ---
   const [opModal, setOpModal] = useState({ open: false, type: 'in', item: null });
   const openOp = (row, type) => setOpModal({ open: true, type, item: row });
   const closeOp = () => setOpModal({ open: false, type: 'in', item: null });
 
-  // --- LOAD LISTY ---
   const load = async () => {
     try {
       setLoading(true);
@@ -146,7 +137,6 @@ export default function InventoryListPage() {
     return Array.isArray(items) ? [...items].sort(srt) : [];
   }, [items, sort]);
 
-  // --- AUTOCOMPLETE PRODUKTU ---
   const timer = useRef(null);
   const inflight = useRef(null);
 
@@ -215,7 +205,6 @@ export default function InventoryListPage() {
     } catch (_e) { /* ignore */ }
   };
 
-  // --- AUTOCOMPLETE LOKALIZACJI (filtr) — po 1 znaku ---
   const locDebounce = useRef(null);
   useEffect(() => {
     const q = (loc || '').trim();
@@ -238,7 +227,6 @@ export default function InventoryListPage() {
     return () => clearTimeout(locDebounce.current);
   }, [loc]);
 
-  // --- EDYCJA WIERSZA ---
   const startEdit = (row) => {
     setEditId(row.id);
     setDraft({
@@ -313,7 +301,6 @@ export default function InventoryListPage() {
     load();
   };
 
-  // --- EKSPORT ---
   const makeExportParams = () => ({
     productId: productId || undefined,
     location: loc || undefined,
@@ -359,7 +346,6 @@ export default function InventoryListPage() {
           {prodOptions.map((o) => <option key={o.id} value={o.label} />)}
         </datalist>
 
-        {/* Lokalizacja – podpowiedzi po 1 znaku */}
         <input
           list="loc-filter-options"
           placeholder="Lokalizacja"
@@ -389,7 +375,6 @@ export default function InventoryListPage() {
         <button onClick={applyFilters}>Szukaj</button>
         <button onClick={resetFilters}>Reset</button>
 
-        {/* EKSPORT */}
         <div className="export-buttons">
           <button onClick={onExportCSV}>Eksport CSV</button>
           <button onClick={onExportPDF}>Eksport PDF</button>
@@ -425,7 +410,7 @@ export default function InventoryListPage() {
                 const auto = getAutoStatus(row);
 
                 const isInTransit = row.flowStatus === 'in_transit';
-                const disableIn = isInTransit; // w tranzycie – najpierw Odbierz
+                const disableIn = isInTransit;
                 const disableOut = isInTransit || row.flowStatus === 'damaged' || available <= 0;
                 const disableTransfer = isInTransit || row.flowStatus === 'damaged' || available <= 0;
 
@@ -499,7 +484,7 @@ export default function InventoryListPage() {
                       )}
                     </td>
 
-                    <td style={{ width: 220 }}>
+                    <td style={{ width: 260 }}>
                       {isEdit ? (
                         <div style={{ display: 'grid', gap: 6 }}>
                           <select
@@ -510,19 +495,25 @@ export default function InventoryListPage() {
                             <option value="in_transit">in_transit</option>
                             <option value="damaged">damaged</option>
                           </select>
-                          <div style={{ fontSize: 12, color: '#6b7280' }}>
-                            auto:{' '}<AutoBadge value={getAutoStatus({ ...row, ...draft })} />
-                          </div>
+                          {/* Pokaż „auto:” tylko gdy jest znaczek */}
+                          {(() => {
+                            const v = getAutoStatus({ ...row, ...draft });
+                            return v ? (
+                              <div style={{ fontSize: 12, color: '#6b7280' }}>
+                                auto: <AutoBadge value={v} />
+                              </div>
+                            ) : null;
+                          })()}
                         </div>
                       ) : (
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                           <FlowBadge status={row.flowStatus} />
-                          {auto && (
+                          {auto ? (
                             <>
                               <span style={{ fontSize: 12, color: '#6b7280' }}>auto:</span>
                               <AutoBadge value={auto} />
                             </>
-                          )}
+                          ) : null}
                         </div>
                       )}
                     </td>
@@ -536,7 +527,6 @@ export default function InventoryListPage() {
                           </>
                         ) : (
                           <>
-                            {/* Odbiór z tranzytu – tylko gdy in_transit */}
                             {isInTransit && (
                               <button
                                 className="btn btn-primary"
@@ -547,7 +537,6 @@ export default function InventoryListPage() {
                               </button>
                             )}
 
-                            {/* Pozostałe operacje – wyszarzone w tranzycie */}
                             <button
                               className="btn"
                               onClick={() => openOp(row, 'in')}
@@ -602,7 +591,6 @@ export default function InventoryListPage() {
         </table>
       </div>
 
-      {/* Pasek zapisu – w trybie edycji */}
       {editId && (
         <div className="edit-floating-bar">
           <span>Edytujesz pozycję #{editId}</span>

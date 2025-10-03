@@ -11,11 +11,6 @@ const FLOW_STATUSES_WRITE = ['available', 'in_transit', 'damaged'];
 const isValidFlowStatusAny   = (v) => typeof v === 'string' && FLOW_STATUSES_ALL.includes(v);
 const isValidFlowStatusWrite = (v) => typeof v === 'string' && FLOW_STATUSES_WRITE.includes(v);
 
-function todayIsoDate() {
-  const d = new Date();
-  return d.toISOString().slice(0, 10);
-}
-
 async function locationExistsCI(name = '') {
   if (!name || typeof name !== 'string') return false;
   const row = await Location.findOne({
@@ -59,11 +54,19 @@ router.get('/', async (req, res) => {
     if (location) where.location = { [Op.iLike]: `%${location}%` };
     if (condition) where.condition = condition;
     if (supplier) where.supplier = { [Op.iLike]: `%${supplier}%` };
+    if (flowStatus && isValidFlowStatusAny(flowStatus)) where.flowStatus = flowStatus;
+
+    const productInclude = {
+      model: Product,
+      as: 'product',
+      attributes: ['id', 'sku', 'name', 'category', 'brand', 'minStockLevel', 'reorderPoint', 'cost'],
+      required: String(lowStock) === 'true',
+      where: {},
+    };
+
     if (String(lowStock) === 'true') {
       where.quantity = { [Op.lte]: literal('"product"."minStockLevel"') };
-    }
-    if (flowStatus && isValidFlowStatusAny(flowStatus)) {
-      where.flowStatus = flowStatus;
+      productInclude.where.minStockLevel = { [Op.not]: null };
     }
 
     const result = await InventoryItem.findAndCountAll({
@@ -72,11 +75,7 @@ router.get('/', async (req, res) => {
       offset,
       order: [['createdAt', 'DESC']],
       include: [
-        {
-          model: Product,
-          as: 'product',
-          attributes: ['id', 'sku', 'name', 'category', 'brand', 'minStockLevel', 'reorderPoint'],
-        },
+        productInclude,
         {
           model: User,
           as: 'lastUpdatedByUser',
@@ -85,10 +84,22 @@ router.get('/', async (req, res) => {
       ],
     });
 
+    // autoStatus liczony po ILOŚCI (quantity), nie po available
+    const items = result.rows.map((it) => {
+      const j = it.toJSON();
+      const qty = Number(j.quantity || 0);
+      const min = Number(j.product?.minStockLevel ?? NaN);
+      const autoStatus =
+        qty === 0 ? 'empty'
+        : Number.isFinite(min) && qty <= min ? 'low'
+        : 'ok';
+      return { ...j, autoStatus };
+    });
+
     res.json({
       success: true,
       data: {
-        inventoryItems: result.rows,
+        inventoryItems: items,
         pagination: {
           currentPage: Number(page),
           totalPages: Math.ceil(result.count / Number(limit)),
@@ -115,6 +126,7 @@ router.get('/summary', async (_req, res) => {
           model: Product,
           as: 'product',
           where: { minStockLevel: { [Op.not]: null } },
+          required: true,
         },
       ],
       where: { quantity: { [Op.lte]: literal('"product"."minStockLevel"') } },
@@ -169,10 +181,15 @@ router.get('/operations', async (req, res) => {
     const userFilter = userId || performedBy;
     if (userFilter) where.userId = userFilter;
 
-    if (startDate || endDate) {
+    // sanity-check zakresu dat
+    let start = startDate ? new Date(startDate) : null;
+    let end = endDate ? new Date(endDate) : null;
+    if (start && end && start > end) [start, end] = [end, start];
+
+    if (start || end) {
       where.operationDate = {};
-      if (startDate) where.operationDate[Op.gte] = new Date(startDate);
-      if (endDate) where.operationDate[Op.lte] = new Date(endDate);
+      if (start) where.operationDate[Op.gte] = start;
+      if (end) where.operationDate[Op.lte] = end;
     }
 
     const ops = await InventoryOperation.findAndCountAll({
@@ -322,14 +339,17 @@ router.post('/', async (req, res) => {
 });
 
 /* =========================== PUT /api/inventory/:id ====================== */
+// Jedna operacja „adjustment” z pełnym changelogiem + productId zawsze w operacji
 router.put('/:id', async (req, res) => {
   try {
     const item = await InventoryItem.findByPk(req.params.id);
     if (!item) return res.status(404).json({ success: false, error: 'Inventory item not found' });
 
-    const prevQty = item.quantity;
-    const prevLoc = item.location;
-    const prevStatus = item.flowStatus;
+    const before = {
+      qty: item.quantity,
+      loc: item.location,
+      st:  item.flowStatus,
+    };
 
     const update = { ...req.body };
     if (update.flowStatus && !isValidFlowStatusWrite(update.flowStatus)) {
@@ -351,59 +371,34 @@ router.put('/:id', async (req, res) => {
 
     await item.update(update);
 
-    const actor = update.lastUpdatedBy ?? 1;
+    const actor  = update.lastUpdatedBy ?? 1;
     const opDate = req.body.operationDate ? new Date(req.body.operationDate) : new Date();
-    const extraNote = req.body.notes ? ` | ${req.body.notes}` : '';
 
-    // ilość
-    if (update.quantity != null && update.quantity !== prevQty) {
-      const delta = update.quantity - prevQty;
+    const after = {
+      qty: item.quantity,
+      loc: item.location,
+      st:  item.flowStatus,
+    };
+
+    const changes = [];
+    if (after.qty !== before.qty) changes.push(`qty: ${before.qty} → ${after.qty}`);
+    if ((before.loc || '') !== (after.loc || '')) changes.push(`loc: ${before.loc || '—'} → ${after.loc || '—'}`);
+    if ((before.st  || '') !== (after.st  || '')) changes.push(`status: ${before.st || '—'} → ${after.st || '—'}`);
+    if (req.body.notes) changes.push(`note: ${req.body.notes}`);
+
+    if (changes.length) {
       await InventoryOperation.create({
         inventoryItemId: item.id,
-        productId: item.productId,
+        productId: item.productId, // ID produktu zawsze w logu
         operationType: 'adjustment',
-        quantity: Math.abs(delta),
+        quantity: Math.abs((after.qty ?? 0) - (before.qty ?? 0)),
         userId: actor,
         operationDate: opDate,
-        notes: `Manual quantity change via UI: ${prevQty} → ${update.quantity}${extraNote}`,
-        quantityBefore: prevQty,
-        quantityAfter: update.quantity
-      });
-    }
-
-    // zmiana lokalizacji
-    if (update.location != null) {
-      const fromN = String(prevLoc || '').trim().toLowerCase();
-      const toN   = String(update.location || '').trim().toLowerCase();
-      if (fromN !== toN) {
-        await InventoryOperation.create({
-          inventoryItemId: item.id,
-          productId: item.productId,
-          operationType: 'transfer',
-          quantity: 0, // tylko zmiana lokacji
-          userId: actor,
-          operationDate: opDate,
-          fromLocation: prevLoc,
-          toLocation: update.location,
-          notes: `Manual location change via edit UI: ${prevLoc} → ${update.location}${extraNote}`,
-          quantityBefore: item.quantity,
-          quantityAfter: item.quantity,
-        });
-      }
-    }
-
-    // zmiana statusu
-    if (update.flowStatus != null && update.flowStatus !== prevStatus) {
-      await InventoryOperation.create({
-        inventoryItemId: item.id,
-        productId: item.productId,
-        operationType: 'adjustment',
-        quantity: 0, // tylko status
-        userId: actor,
-        operationDate: opDate,
-        notes: `Status change: ${prevStatus} → ${update.flowStatus}${extraNote}`,
-        quantityBefore: item.quantity,
-        quantityAfter: item.quantity
+        fromLocation: before.loc,
+        toLocation: after.loc,
+        notes: `Edit: ${changes.join(' | ')}`,
+        quantityBefore: before.qty ?? 0,
+        quantityAfter:  after.qty ?? 0,
       });
     }
 
@@ -430,10 +425,9 @@ router.post('/operations', async (req, res) => {
       userId,
       operationDate = new Date(),
       notes,
-      // NOWE:
-      useReserved = false,   // OUT: wydać z puli zarezerwowanej
-      reserveAfter = false,  // IN: od razu coś zarezerwować
-      reserveAmount = 0,     // IN: ile z przyjęcia trafi do rezerwacji
+      useReserved = false,
+      reserveAfter = false,
+      reserveAmount = 0,
     } = req.body;
 
     if (!inventoryItemId || !operationType || !quantity) {
@@ -479,7 +473,6 @@ router.post('/operations', async (req, res) => {
       } else {
         if (q > available) return res.status(400).json({ success: false, error: 'Insufficient available quantity' });
         qtyAfter = qtyBefore - q;
-        // rezerwacja bez zmian
       }
     }
 
@@ -488,14 +481,12 @@ router.post('/operations', async (req, res) => {
 
       if (reserveAfter) {
         let r = Math.max(0, Math.min(parseInt(reserveAmount, 10) || 0, q));
-        // dodatkowe zabezpieczenie: rezerwacja nie może przekroczyć stanu po operacji
         r = Math.min(r, qtyAfter - resBefore);
         resAfter = resBefore + r;
         infoNote = r > 0 ? `[IN reserve +${r}] ` : '';
       }
     }
 
-    // zapis operacji
     const op = await InventoryOperation.create({
       inventoryItemId,
       productId: item.productId,
@@ -508,7 +499,6 @@ router.post('/operations', async (req, res) => {
       quantityAfter: qtyAfter,
     }, { transaction: t });
 
-    // aktualizacja pozycji
     await item.update(
       { quantity: qtyAfter, reservedQuantity: resAfter, lastUpdatedBy: actor },
       { transaction: t }
@@ -529,10 +519,6 @@ router.post('/operations', async (req, res) => {
 });
 
 /* ====================== POST /api/inventory/receive ===================== */
-/** Odbiór z tranzytu: flowStatus in_transit -> available (bez zmiany ilości).
- *  Zapisuje wpis w InventoryOperation z operationType = 'receive'.
- *  Body: { inventoryItemId, userId?, operationDate?, notes? }
- */
 router.post('/receive', async (req, res) => {
   const t = await sequelize.transaction();
   try {
@@ -557,13 +543,11 @@ router.post('/receive', async (req, res) => {
     const actor = userId ? Number(userId) : 1;
     const qtyBefore = Number(item.quantity || 0);
 
-    // 1) status → available
     await item.update(
       { flowStatus: 'available', lastUpdatedBy: actor },
       { transaction: t }
     );
 
-    // 2) log operacji 'receive'
     const op = await InventoryOperation.create({
       inventoryItemId: item.id,
       productId: item.productId,
@@ -591,6 +575,7 @@ router.post('/receive', async (req, res) => {
 
 /* ====================== POST /api/inventory/transfer ===================== */
 router.post('/transfer', async (req, res) => {
+  const t = await sequelize.transaction();
   try {
     const {
       fromItemId,
@@ -602,36 +587,34 @@ router.post('/transfer', async (req, res) => {
     } = req.body;
 
     if (!fromItemId || !toLocation || !quantity) {
+      await t.rollback();
       return res.status(400).json({ success: false, error: 'fromItemId, toLocation i quantity są wymagane' });
     }
     const q = parseInt(quantity, 10);
     if (!q || q <= 0) {
+      await t.rollback();
       return res.status(400).json({ success: false, error: 'Nieprawidłowa ilość' });
     }
 
     if (!(await locationExistsCI(String(toLocation)))) {
+      await t.rollback();
       return res.status(400).json({ success: false, error: 'Location not found in dictionary' });
     }
 
-    const src = await InventoryItem.findByPk(fromItemId);
-    if (!src) return res.status(400).json({ success: false, error: 'Inventory item not found' });
+    const src = await InventoryItem.findByPk(fromItemId, { transaction: t, lock: t.LOCK.UPDATE });
+    if (!src) { await t.rollback(); return res.status(400).json({ success: false, error: 'Inventory item not found' }); }
 
     if (String(src.location).trim().toLowerCase() === String(toLocation).trim().toLowerCase()) {
+      await t.rollback();
       return res.status(400).json({ success: false, error: 'Docelowa lokalizacja nie może być taka sama' });
     }
 
-    if (src.flowStatus === 'damaged') {
-      return res.status(400).json({ success: false, error: 'Item is damaged — transfer blocked' });
-    }
-    if (src.flowStatus === 'in_transit') {
-      return res.status(400).json({ success: false, error: 'Item already in transit' });
-    }
+    if (src.flowStatus === 'damaged') { await t.rollback(); return res.status(400).json({ success: false, error: 'Item is damaged — transfer blocked' }); }
+    if (src.flowStatus === 'in_transit') { await t.rollback(); return res.status(400).json({ success: false, error: 'Item already in transit' }); }
 
     const actor = userId ? Number(userId) : 1;
     const available = Math.max(0, (src.quantity || 0) - (src.reservedQuantity || 0));
-    if (q > available) {
-      return res.status(400).json({ success: false, error: 'Insufficient available quantity' });
-    }
+    if (q > available) { await t.rollback(); return res.status(400).json({ success: false, error: 'Insufficient available quantity' }); }
 
     // OUT ze źródła
     const srcBefore = src.quantity;
@@ -647,12 +630,14 @@ router.post('/transfer', async (req, res) => {
       notes: `Transfer → ${toLocation}${notes ? ` | ${notes}` : ''}`,
       quantityBefore: srcBefore,
       quantityAfter: srcAfter,
-    });
-    await src.update({ quantity: srcAfter, lastUpdatedBy: actor });
+    }, { transaction: t });
+    await src.update({ quantity: srcAfter, lastUpdatedBy: actor }, { transaction: t });
 
     // Pozycja docelowa
     let dest = await InventoryItem.findOne({
       where: { productId: src.productId, location: toLocation },
+      transaction: t,
+      lock: t.LOCK.UPDATE,
     });
     if (!dest) {
       dest = await InventoryItem.create({
@@ -666,9 +651,9 @@ router.post('/transfer', async (req, res) => {
         batchNumber: null,
         purchaseOrderNumber: null,
         lastUpdatedBy: actor,
-      });
+      }, { transaction: t });
     } else {
-      await dest.update({ flowStatus: 'in_transit', lastUpdatedBy: actor });
+      await dest.update({ flowStatus: 'in_transit', lastUpdatedBy: actor }, { transaction: t });
     }
 
     // IN do celu
@@ -685,11 +670,12 @@ router.post('/transfer', async (req, res) => {
       notes: `Transfer ← ${src.location}${notes ? ` | ${notes}` : ''}`,
       quantityBefore: destBefore,
       quantityAfter: destAfter,
-    });
-    await dest.update({ quantity: destAfter, lastUpdatedBy: actor });
+    }, { transaction: t });
+    await dest.update({ quantity: destAfter, lastUpdatedBy: actor }, { transaction: t });
 
     try { await recomputeAndNotifyLowStock(src.productId); } catch (e) { console.warn('lowStock recompute failed:', e?.message); }
 
+    await t.commit();
     res.status(201).json({
       success: true,
       data: {
@@ -700,6 +686,7 @@ router.post('/transfer', async (req, res) => {
       },
     });
   } catch (err) {
+    await t.rollback();
     console.error('Create transfer error:', err);
     res.status(500).json({ success: false, error: 'Internal server error' });
   }

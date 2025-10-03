@@ -1,5 +1,5 @@
 // src/pages/AdminComposeNotification.jsx
-import React, { useContext, useMemo, useRef, useState } from 'react';
+import React, { useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import { AuthContext } from '../context/AuthContext';
@@ -65,6 +65,13 @@ export default function AdminComposeNotification() {
 
   const [saving, setSaving] = useState(false);
 
+  useEffect(() => {
+    return () => {
+      if (userDebounce.current) clearTimeout(userDebounce.current);
+      if (prodDebounce.current) clearTimeout(prodDebounce.current);
+    };
+  }, []);
+
   if (!canSend) {
     return (
       <div className="page">
@@ -94,7 +101,6 @@ export default function AdminComposeNotification() {
       try {
         const opts = await getUserOptions(q, 20);
         setUserOptions(opts || []);
-        // jeżeli pojedyncze dopasowanie – wybierz
         if ((opts || []).length === 1) setSelectedUserId(opts[0].id);
       } catch {
         setUserOptions([]);
@@ -146,9 +152,17 @@ export default function AdminComposeNotification() {
         return;
       }
 
+      if (schedule && when) {
+        const ts = new Date(when).getTime();
+        if (Number.isFinite(ts) && ts < Date.now() - 1000) {
+          toast.error('Zaplanowana data nie może być w przeszłości');
+          return;
+        }
+      }
+
       const payload = {
         authorId: user?.id,
-        role: user?.role,             // backend wymusi typ na admin_message/manager_message
+        role: user?.role,
         title: title.trim().slice(0, 200),
         message: message.trim(),
         priority,
@@ -169,14 +183,11 @@ export default function AdminComposeNotification() {
       const resolvedProductId = productId || resolveProductIdFromLabel(productInput);
       if (resolvedProductId) payload.productId = resolvedProductId;
 
-      if (schedule && when) {
-        payload.scheduledAt = new Date(when).toISOString();
-      }
+      if (schedule && when) payload.scheduledAt = new Date(when).toISOString();
 
       setSaving(true);
       await createSystemMessage(payload);
       toast.success('Powiadomienie utworzone');
-      // poinformuj navbar o możliwej zmianie licznika
       window.dispatchEvent(new Event('notifications:update'));
       navigate('/notifications');
     } catch (err) {
@@ -299,6 +310,7 @@ export default function AdminComposeNotification() {
               value={when}
               onChange={(e) => setWhen(e.target.value)}
               disabled={!schedule}
+              min={nowLocalDatetimeValue()}
             />
           </div>
         </fieldset>
